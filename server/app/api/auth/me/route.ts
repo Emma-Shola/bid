@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/rbac";
 import { jsonError } from "@/lib/http";
 import { applyCorsHeaders } from "@/lib/cors";
@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export function OPTIONS(req: NextRequest) {
-  return applyCorsHeaders(req, new Response(null, { status: 204 } as ResponseInit) as Response);
+  return applyCorsHeaders(req, new NextResponse(null, { status: 204 }));
 }
 
 export async function GET(req: NextRequest) {
