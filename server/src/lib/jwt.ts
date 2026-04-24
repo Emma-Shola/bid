@@ -50,10 +50,24 @@ export function shouldUseSecureCookies(req?: NextRequest) {
   return process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
 }
 
+export function getCookieSameSite() {
+  const configured = process.env.COOKIE_SAME_SITE?.trim().toLowerCase();
+  if (configured === "lax" || configured === "strict" || configured === "none") {
+    return configured;
+  }
+
+  // Separate Render services use different origins, so auth cookies must be cross-site in production.
+  if (process.env.NODE_ENV === "production") {
+    return "none";
+  }
+
+  return "lax";
+}
+
 export function setAuthCookie(response: NextResponse, token: string, req?: NextRequest) {
   response.cookies.set(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: getCookieSameSite(),
     secure: shouldUseSecureCookies(req),
     path: "/",
     maxAge: 60 * 15
@@ -63,7 +77,7 @@ export function setAuthCookie(response: NextResponse, token: string, req?: NextR
 export function clearAuthCookie(response: NextResponse, req?: NextRequest) {
   response.cookies.set(AUTH_COOKIE_NAME, "", {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: getCookieSameSite(),
     secure: shouldUseSecureCookies(req),
     path: "/",
     maxAge: 0

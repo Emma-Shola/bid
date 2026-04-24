@@ -9,13 +9,22 @@ const protectedPrefixes = [
   "/api/ai"
 ];
 
+function parseConfiguredOrigins(value?: string) {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 const allowedOrigins = new Set([
   "http://localhost:8080",
   "http://127.0.0.1:8080",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  process.env.CLIENT_URL?.trim().replace(/\/$/, "") ?? ""
-].filter(Boolean));
+  ...parseConfiguredOrigins(process.env.CLIENT_URL),
+  ...parseConfiguredOrigins(process.env.CLIENT_URLS)
+]);
 
 function applyCorsHeaders(req: NextRequest, response: NextResponse) {
   const origin = req.headers.get("origin");

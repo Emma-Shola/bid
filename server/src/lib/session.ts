@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "./prisma";
-import { clearAuthCookie, setAuthCookie, signAuthToken } from "./jwt";
+import { clearAuthCookie, getCookieSameSite, setAuthCookie, shouldUseSecureCookies, signAuthToken } from "./jwt";
 import type { User } from "@prisma/client";
 
 export const AUTH_REFRESH_COOKIE_NAME = process.env.AUTH_REFRESH_COOKIE_NAME ?? "zaaa_refresh";
@@ -9,14 +9,6 @@ const REFRESH_TOKEN_BYTES = 64;
 const REFRESH_TOKEN_DAYS = 30;
 
 export type SessionUser = Pick<User, "id" | "username" | "role" | "isApproved">;
-
-function shouldUseSecureCookies(req?: NextRequest) {
-  const host = req?.headers.get("host") ?? "";
-  if (host.includes("localhost") || host.startsWith("127.0.0.1")) {
-    return false;
-  }
-  return process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
-}
 
 function refreshTokenExpiry() {
   return new Date(Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000);
@@ -139,7 +131,7 @@ export function setSessionCookies(response: NextResponse, accessToken: string, r
   setAuthCookie(response, accessToken, req);
   response.cookies.set(AUTH_REFRESH_COOKIE_NAME, refreshToken, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: getCookieSameSite(),
     secure: shouldUseSecureCookies(req),
     path: "/",
     maxAge: 60 * 60 * 24 * REFRESH_TOKEN_DAYS
@@ -150,7 +142,7 @@ export function clearSessionCookies(response: NextResponse, req?: NextRequest) {
   clearAuthCookie(response, req);
   response.cookies.set(AUTH_REFRESH_COOKIE_NAME, "", {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: getCookieSameSite(),
     secure: shouldUseSecureCookies(req),
     path: "/",
     maxAge: 0
