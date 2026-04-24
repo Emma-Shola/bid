@@ -73,7 +73,7 @@ const requestedDev = process.argv.includes("--dev");
 const requestedProd = process.argv.includes("--prod");
 const hasProductionBuild = existsSync(path.join(process.cwd(), ".next"));
 const dev = requestedProd ? false : requestedDev || process.env.NODE_ENV !== "production" || !hasProductionBuild;
-const hostname = process.env.HOSTNAME ?? "0.0.0.0";
+const hostname = "0.0.0.0";
 const port = Number(process.env.PORT ?? 3000);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
