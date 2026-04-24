@@ -17,6 +17,19 @@ function parseConfiguredOrigins(value?: string) {
     .filter(Boolean);
 }
 
+function isTrustedProductionOrigin(origin: string) {
+  if (process.env.NODE_ENV !== "production") {
+    return false;
+  }
+
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && url.hostname.endsWith(".onrender.com");
+  } catch {
+    return false;
+  }
+}
+
 const allowedOrigins = new Set([
   "http://localhost:8080",
   "http://127.0.0.1:8080",
@@ -28,7 +41,7 @@ const allowedOrigins = new Set([
 
 function applyCorsHeaders(req: NextRequest, response: NextResponse) {
   const origin = req.headers.get("origin");
-  if (!origin || !allowedOrigins.has(origin)) {
+  if (!origin || (!allowedOrigins.has(origin) && !isTrustedProductionOrigin(origin))) {
     return response;
   }
 
