@@ -22,6 +22,11 @@ type ApiErrorEnvelope = {
   details?: unknown;
 };
 
+type ValidationDetails = {
+  fieldErrors?: Record<string, string[] | undefined>;
+  formErrors?: string[];
+};
+
 type ApiUserRecord = {
   id: string;
   username: string;
@@ -143,7 +148,19 @@ async function request<T>(path: string, init: RequestInit = {}, allowRefresh = t
   }
 
   if (!response.ok) {
-    const err = new Error((body as ApiErrorEnvelope).error ?? `Request failed with status ${response.status}`);
+    const errorBody = body as ApiErrorEnvelope;
+    const details = errorBody.details as ValidationDetails | undefined;
+
+    const firstFieldError = details?.fieldErrors
+      ? Object.values(details.fieldErrors).find((messages) => Array.isArray(messages) && messages.length > 0)?.[0]
+      : undefined;
+
+    const firstFormError = details?.formErrors?.[0];
+
+    const message =
+      firstFieldError ?? firstFormError ?? errorBody.error ?? `Request failed with status ${response.status}`;
+
+    const err = new Error(message);
     Object.assign(err, body);
     throw err;
   }
