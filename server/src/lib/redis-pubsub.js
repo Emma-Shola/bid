@@ -6,12 +6,34 @@ const redisUrl = process.env.REDIS_URL;
 let publisherPromise = null;
 let subscriberPromise = null;
 
-function createRedisClient() {
+function getValidRedisUrl() {
   if (!redisUrl) {
     return null;
   }
 
-  return createClient({ url: redisUrl });
+  try {
+    const parsed = new URL(redisUrl);
+    const isRedisProtocol = parsed.protocol === "redis:" || parsed.protocol === "rediss:";
+    const isPlaceholderHost = parsed.hostname.toUpperCase() === "HOST";
+
+    if (!isRedisProtocol || !parsed.hostname || isPlaceholderHost) {
+      return null;
+    }
+
+    return redisUrl;
+  } catch {
+    return null;
+  }
+}
+
+const validRedisUrl = getValidRedisUrl();
+
+function createRedisClient() {
+  if (!validRedisUrl) {
+    return null;
+  }
+
+  return createClient({ url: validRedisUrl });
 }
 
 async function connectClient(client) {
@@ -23,7 +45,7 @@ async function connectClient(client) {
 }
 
 async function getPublisher() {
-  if (!redisUrl) {
+  if (!validRedisUrl) {
     return null;
   }
 
@@ -40,7 +62,7 @@ async function getPublisher() {
 }
 
 async function getSubscriber() {
-  if (!redisUrl) {
+  if (!validRedisUrl) {
     return null;
   }
 

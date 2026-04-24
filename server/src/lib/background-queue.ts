@@ -8,12 +8,33 @@ export const BACKGROUND_QUEUE_NAME = "background-jobs";
 let queue: Queue | null = null;
 let queueConnection: IORedis | null = null;
 
+function getValidRedisUrl() {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(redisUrl);
+    const isRedisProtocol = parsed.protocol === "redis:" || parsed.protocol === "rediss:";
+    const isPlaceholderHost = parsed.hostname.toUpperCase() === "HOST";
+
+    if (!isRedisProtocol || !parsed.hostname || isPlaceholderHost) {
+      return null;
+    }
+
+    return redisUrl;
+  } catch {
+    return null;
+  }
+}
+
 export function isBackgroundQueueEnabled() {
-  return Boolean(process.env.REDIS_URL);
+  return Boolean(getValidRedisUrl());
 }
 
 export function createBullmqConnection() {
-  const redisUrl = process.env.REDIS_URL;
+  const redisUrl = getValidRedisUrl();
   if (!redisUrl) {
     throw new Error("REDIS_URL is required for the background queue");
   }
