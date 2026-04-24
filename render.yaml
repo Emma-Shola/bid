@@ -1,7 +1,7 @@
 services:
   - type: web
     name: bid-server
-    env: node
+    runtime: node
     rootDir: server
     plan: free
     buildCommand: npm install && npm run prisma:generate && npm run build
@@ -24,8 +24,9 @@ services:
       - key: REDIS_URL
         sync: false
 
-  - type: static
+  - type: web
     name: bid-client
+    runtime: static
     rootDir: client
     buildCommand: npm install && npm run build
     staticPublishPath: dist
