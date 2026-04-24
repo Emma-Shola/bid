@@ -1,42 +1,8 @@
 import { NextRequest } from "next/server";
 
-function parseConfiguredOrigins(value?: string) {
-  if (!value) return [];
-  return value
-    .split(",")
-    .map((origin) => origin.trim().replace(/\/$/, ""))
-    .filter(Boolean);
-}
-
-function isTrustedProductionOrigin(origin: string) {
-  if (process.env.NODE_ENV !== "production") {
-    return false;
-  }
-
-  try {
-    const url = new URL(origin);
-    return url.protocol === "https:" && url.hostname.endsWith(".onrender.com");
-  } catch {
-    return false;
-  }
-}
-
-const allowedOrigins = new Set([
-  "http://localhost:8080",
-  "http://127.0.0.1:8080",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  ...parseConfiguredOrigins(process.env.CLIENT_URL),
-  ...parseConfiguredOrigins(process.env.CLIENT_URLS)
-]);
-
-export function isAllowedCorsOrigin(origin: string) {
-  return allowedOrigins.has(origin) || isTrustedProductionOrigin(origin);
-}
-
 export function applyCorsHeaders(req: NextRequest, response: Response) {
   const origin = req.headers.get("origin");
-  if (!origin || !isAllowedCorsOrigin(origin)) {
+  if (!origin) {
     return response;
   }
 
