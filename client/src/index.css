@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Topbrass design system - restrained, enterprise SaaS.
+   Single accent (indigo), neutral surfaces, strong contrast.
+   All colors HSL. No gradients, no decorative effects. */
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 0 0% 100%;
+    --foreground: 222 20% 14%;
+
+    --surface: 220 20% 98.5%;        /* app chrome / page bg */
+    --surface-foreground: 222 20% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 20% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 20% 14%;
+
+    /* Brand accent — indigo, used sparingly */
+    --primary: 231 60% 52%;
+    --primary-foreground: 0 0% 100%;
+    --primary-muted: 231 80% 96%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 20% 20%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 94%;
+    --accent-foreground: 222 20% 14%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 45%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 210 90% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --border-strong: 220 13% 84%;
+    --input: 220 13% 89%;
+    --ring: 231 60% 52%;
+
+    --radius: 0.5rem;
+
+    /* Sidebar — slightly cooler than page bg */
+    --sidebar-background: 222 25% 12%;
+    --sidebar-foreground: 220 14% 80%;
+    --sidebar-primary: 231 60% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 25% 18%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 20% 20%;
+    --sidebar-ring: 231 60% 60%;
+  }
+
+  .dark {
+    --background: 222 24% 8%;
+    --foreground: 220 14% 92%;
+
+    --surface: 222 24% 10%;
+    --surface-foreground: 220 14% 92%;
+
+    --card: 222 24% 11%;
+    --card-foreground: 220 14% 92%;
+
+    --popover: 222 24% 11%;
+    --popover-foreground: 220 14% 92%;
+
+    --primary: 231 70% 65%;
+    --primary-foreground: 222 24% 10%;
+    --primary-muted: 231 40% 18%;
+
+    --secondary: 222 20% 16%;
+    --secondary-foreground: 220 14% 92%;
+
+    --muted: 222 20% 16%;
+    --muted-foreground: 220 9% 60%;
+
+    --accent: 222 20% 18%;
+    --accent-foreground: 220 14% 92%;
+
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 55% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 90% 55%;
+    --warning-foreground: 0 0% 0%;
+
+    --info: 210 85% 60%;
+    --info-foreground: 0 0% 0%;
+
+    --border: 222 20% 20%;
+    --border-strong: 222 20% 28%;
+    --input: 222 20% 22%;
+    --ring: 231 70% 65%;
+
+    --sidebar-background: 222 28% 7%;
+    --sidebar-foreground: 220 14% 78%;
+    --sidebar-primary: 231 70% 65%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 25% 14%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 25% 16%;
+    --sidebar-ring: 231 70% 65%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-surface text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    font-family: ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  /* Numeric tabular alignment in tables and stats */
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  .data-table {
+    @apply w-full text-sm;
+  }
+  .data-table th {
+    @apply text-left font-medium text-muted-foreground px-3 py-2 border-b border-border bg-surface;
+  }
+  .data-table td {
+    @apply px-3 py-2.5 border-b border-border align-middle;
+  }
+  .data-table tr:hover td {
+    @apply bg-muted/50;
+  }
+}

@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  bidder
+  manager
+  admin
+}
+
+enum ApplicationStatus {
+  submitted
+  reviewed
+  interviewed
+  rejected
+  hired
+}
+
+model User {
+  id           String       @id @default(auto()) @map("_id") @db.ObjectId
+  username     String       @unique
+  passwordHash String       @map("password_hash")
+  role         UserRole
+  isApproved   Boolean      @default(false) @map("is_approved")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  bidder       BidderProfile?
+  managerProfile ManagerProfile?
+  assignedBidders BidderProfile[] @relation("BidderManager")
+  sessions     Session[]
+  paymentsMade Payment[]    @relation("PaymentsMade")
+  auditLogs    AuditLog[]
+  notifications Notification[]
+  backgroundJobs BackgroundJob[]
+  managedResumes Resume[]   @relation("ManagerResumes")
+  createdResumes Resume[]   @relation("CreatedResumes")
+  generatedResumes GeneratedResume[] @relation("BidderGeneratedResumes")
+
+  @@map("users")
+}
+
+model BidderProfile {
+  id          String         @id @map("_id") @db.ObjectId
+  user        User           @relation(fields: [id], references: [id])
+  email       String
+  fullName    String         @map("full_name")
+  resumeUrl   String?        @map("resume_url")
+  managerId   String?        @map("manager_id") @db.ObjectId
+  manager     User?          @relation("BidderManager", fields: [managerId], references: [id])
+  totalPaid   Float          @default(0) @map("total_paid")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  applications Application[]
+  payments    Payment[]
+
+  @@index([managerId])
+  @@map("bidders")
+}
+
+model ManagerProfile {
+  id                String   @id @map("_id") @db.ObjectId
+  user              User     @relation(fields: [id], references: [id])
+  email             String
+  fullName          String   @map("full_name")
+  templateResumeUrl String?  @map("template_resume_url")
+  templateResumeText String? @map("template_resume_text")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("managers")
+}
+
+model Resume {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  managerId   String   @map("manager_id") @db.ObjectId
+  manager     User     @relation("ManagerResumes", fields: [managerId], references: [id])
+  createdById String?  @map("created_by_id") @db.ObjectId
+  createdBy   User?    @relation("CreatedResumes", fields: [createdById], references: [id])
+  title       String
+  originalText String  @map("original_text")
+  fileUrl     String?  @map("file_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  generatedResumes GeneratedResume[]
+
+  @@index([managerId, createdAt])
+  @@map("resumes")
+}
+
+model GeneratedResume {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  resumeId       String   @map("resume_id") @db.ObjectId
+  resume         Resume   @relation(fields: [resumeId], references: [id])
+  bidderId       String   @map("bidder_id") @db.ObjectId
+  bidder         User     @relation("BidderGeneratedResumes", fields: [bidderId], references: [id])
+  jobTitle       String   @map("job_title")
+  company        String
+  jobDescription String   @map("job_description")
+  outputText     String   @map("output_text")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([resumeId, createdAt])
+  @@index([bidderId, createdAt])
+  @@map("generated_resumes")
+}
+
+model Application {
+  id             String            @id @default(auto()) @map("_id") @db.ObjectId
+  bidderId       String            @map("bidder_id") @db.ObjectId
+  bidder         BidderProfile     @relation(fields: [bidderId], references: [id])
+  jobTitle       String            @map("job_title")
+  company        String
+  jobUrl         String?           @map("job_url")
+  jobDescription String            @map("job_description")
+  resumeUrl      String?           @map("resume_url")
+  status         ApplicationStatus @default(submitted)
+  submittedDate  DateTime          @default(now()) @map("submitted_date")
+  notes          String?
+  salaryMin      Float?            @map("salary_min")
+  salaryMax      Float?            @map("salary_max")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@index([bidderId, status])
+  @@index([status, submittedDate])
+  @@map("applications")
+}
+
+model Payment {
+  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  bidderId    String        @map("bidder_id") @db.ObjectId
+  bidder      BidderProfile @relation(fields: [bidderId], references: [id])
+  managerId   String        @map("manager_id") @db.ObjectId
+  manager     User          @relation("PaymentsMade", fields: [managerId], references: [id])
+  amount      Float
+  paymentDate DateTime      @map("payment_date")
+  notes       String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@index([bidderId, paymentDate])
+  @@index([managerId, paymentDate])
+  @@map("payments")
+}
+
+model AuditLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @map("user_id") @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model Session {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String   @map("user_id") @db.ObjectId
+  user            User     @relation(fields: [userId], references: [id])
+  refreshTokenHash String  @map("refresh_token_hash")
+  expiresAt       DateTime @map("expires_at")
+  revokedAt       DateTime? @map("revoked_at")
+  lastUsedAt      DateTime? @map("last_used_at")
+  userAgent       String?  @map("user_agent")
+  ipAddress       String?  @map("ip_address")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt, revokedAt])
+  @@map("sessions")
+}
+
+model Notification {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @map("user_id") @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  title     String
+  body      String
+  link      String?
+  data      Json?
+  isRead    Boolean  @default(false) @map("is_read")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}
+
+model BackgroundJob {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @map("user_id") @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id])
+  type        String
+  status      String
+  payload     Json
+  result      Json?
+  error       String?
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3) @map("max_attempts")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  failedAt    DateTime? @map("failed_at")
+  deadLetterAt DateTime? @map("dead_letter_at")
+  deadLetterReason String? @map("dead_letter_reason")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, type, status, createdAt])
+  @@map("background_jobs")
+}

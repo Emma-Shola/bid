@@ -1,0 +1,6 @@
+{
+  "watch": ["server.mjs", "server.js", "src", "app", "prisma"],
+  "ext": "js,mjs,cjs,ts,tsx,json",
+  "ignore": ["node_modules", ".next"],
+  "exec": "node server.js"
+}
