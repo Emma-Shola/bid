@@ -1,9 +1,14 @@
 import { NextRequest } from "next/server";
 import { getAuthUser } from "@/lib/rbac";
 import { jsonError } from "@/lib/http";
+import { applyCorsHeaders } from "@/lib/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export function OPTIONS(req: NextRequest) {
+  return applyCorsHeaders(req, new Response(null, { status: 204 } as ResponseInit) as Response);
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -44,7 +49,7 @@ export async function GET(req: NextRequest) {
         }
       : null;
 
-    return Response.json({
+    return applyCorsHeaders(req, Response.json({
       data: {
         user: {
           id: auth.user.id,
@@ -55,9 +60,9 @@ export async function GET(req: NextRequest) {
         bidder,
         managerProfile
       }
-    });
+    }));
   } catch (error) {
     console.error("me GET failed", error);
-    return jsonError("Failed to load current user", 500);
+    return applyCorsHeaders(req, jsonError("Failed to load current user", 500));
   }
 }

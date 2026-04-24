@@ -5,9 +5,14 @@ import { createAuthSession, setSessionCookies } from "@/lib/session";
 import { loginSchema } from "@/lib/validators";
 import { jsonError } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
+import { applyCorsHeaders } from "@/lib/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export function OPTIONS(req: NextRequest) {
+  return applyCorsHeaders(req, new NextResponse(null, { status: 204 }));
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -90,9 +95,9 @@ export async function POST(req: NextRequest) {
     });
 
     setSessionCookies(response, authSession.accessToken, authSession.refreshToken, req);
-    return response;
+    return applyCorsHeaders(req, response);
   } catch (error) {
     console.error("login POST failed", error);
-    return jsonError("Failed to log in", 500);
+    return applyCorsHeaders(req, jsonError("Failed to log in", 500));
   }
 }

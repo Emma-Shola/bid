@@ -4,8 +4,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { clearSessionCookies, getRefreshTokenFromRequest, revokeSessionById, revokeSessionByRefreshToken } from "@/lib/session";
 import { getAuthUser } from "@/lib/rbac";
 import { rateLimit } from "@/lib/rate-limit";
+import { applyCorsHeaders } from "@/lib/cors";
 
 export const runtime = "nodejs";
+
+export function OPTIONS(req: NextRequest) {
+  return applyCorsHeaders(req, new NextResponse(null, { status: 204 }));
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,11 +29,11 @@ export async function POST(req: NextRequest) {
 
     const response = NextResponse.json({ data: { ok: true } });
     clearSessionCookies(response, req);
-    return response;
+    return applyCorsHeaders(req, response);
   } catch (error) {
     console.error("logout POST failed", error);
     const response = NextResponse.json({ data: { ok: true } });
     clearSessionCookies(response, req);
-    return response;
+    return applyCorsHeaders(req, response);
   }
 }

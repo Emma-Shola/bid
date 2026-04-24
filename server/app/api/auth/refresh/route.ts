@@ -3,9 +3,14 @@ import { jsonError } from "@/lib/http";
 import { getRefreshTokenFromRequest, rotateAuthSession, setSessionCookies } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
+import { applyCorsHeaders } from "@/lib/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export function OPTIONS(req: NextRequest) {
+  return applyCorsHeaders(req, new NextResponse(null, { status: 204 }));
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -71,9 +76,9 @@ export async function POST(req: NextRequest) {
     });
 
     setSessionCookies(response, rotated.accessToken, rotated.refreshToken, req);
-    return response;
+    return applyCorsHeaders(req, response);
   } catch (error) {
     console.error("refresh POST failed", error);
-    return jsonError("Failed to refresh session", 500);
+    return applyCorsHeaders(req, jsonError("Failed to refresh session", 500));
   }
 }

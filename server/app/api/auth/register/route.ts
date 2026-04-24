@@ -7,9 +7,14 @@ import { publishEvent } from "@/lib/realtime.js";
 import { registerSchema } from "@/lib/validators";
 import { jsonError } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
+import { applyCorsHeaders } from "@/lib/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export function OPTIONS(req: NextRequest) {
+  return applyCorsHeaders(req, new NextResponse(null, { status: 204 }));
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -113,9 +118,9 @@ export async function POST(req: NextRequest) {
       ,
       { status: 201 }
     );
-    return response;
+    return applyCorsHeaders(req, response);
   } catch (error) {
     console.error("register POST failed", error);
-    return jsonError("Failed to create account", 500);
+    return applyCorsHeaders(req, jsonError("Failed to create account", 500));
   }
 }
