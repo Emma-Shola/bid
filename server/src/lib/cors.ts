@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 function parseConfiguredOrigins(value?: string) {
   if (!value) return [];
@@ -34,7 +34,7 @@ export function isAllowedCorsOrigin(origin: string) {
   return allowedOrigins.has(origin) || isTrustedProductionOrigin(origin);
 }
 
-export function applyCorsHeaders(req: NextRequest, response: NextResponse) {
+export function applyCorsHeaders(req: NextRequest, response: Response) {
   const origin = req.headers.get("origin");
   if (!origin || !isAllowedCorsOrigin(origin)) {
     return response;
