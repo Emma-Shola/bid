@@ -231,7 +231,7 @@ export default function ResumeGenerator() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!output || !looksLikeResumeDocument(output)}
+                disabled={!output}
                 onClick={() => {
                   if (!output) return;
                   downloadResumePdf({

@@ -1,5 +1,5 @@
 ﻿import OpenAI from "openai";
-import { extractCandidateNameFromResumeText } from "./resume-source";
+import { extractCandidateNameFromResumeText, parseResumeSourceOutline } from "./resume-source";
 
 let client: OpenAI | null = null;
 
@@ -161,6 +161,10 @@ function snapshotStructure(structured: StructuredResume): ResumeSectionSnapshot[
   });
 }
 
+function hasBullets(structured: StructuredResume) {
+  return structured.sections.some((section) => section.entries.some((entry) => entry.type === "bullet"));
+}
+
 function buildStrictRewritePrompt(input: { bullet: string; jobDescription: string }) {
   return `You are optimizing a single resume bullet point.
 
@@ -208,6 +212,79 @@ ${input.jobDescription}
 
 Return ONLY the corrected bullet.
 `;
+}
+
+function buildStylePreservingResumePrompt(input: {
+  sourceResume: string;
+  jobTitle: string;
+  company: string;
+  jobDescription: string;
+  outline: ReturnType<typeof parseResumeSourceOutline>;
+  candidateName: string;
+}) {
+  const outlineLines = [
+    `Candidate Name: ${input.outline.candidateName || input.candidateName || "Unknown"}`,
+    `Professional Summary: ${input.outline.professionalSummary || "(not detected in outline)"}`,
+    `Key Skills: ${input.outline.keySkills.length > 0 ? input.outline.keySkills.join(", ") : "(not detected in outline)"}`,
+    `Work Experience: ${input.outline.workExperience.length > 0 ? input.outline.workExperience.join(" | ") : "(not detected in outline)"}`,
+    `Education: ${input.outline.education.length > 0 ? input.outline.education.join(" | ") : "(not detected in outline)"}`,
+  ].join("\n");
+
+  return `You are rewriting a resume to match the style and structure of the provided source resume.
+
+STRICT RULES:
+- Preserve all factual details from the source resume.
+- Preserve the same section order and section headings as the source resume.
+- Preserve the header/contact block style at the top.
+- Keep school names, employer names, locations, dates, degrees, awards, certifications, and contact details unless the source clearly has OCR noise.
+- Rewrite descriptive lines so they are stronger, concise, and tailored to the job description.
+- Do not invent experience, metrics, credentials, or skills.
+- Do not add commentary, markdown fences, or explanations.
+- If the source uses plain text lines instead of bullets, keep that plain-text style.
+- Return only the completed resume.
+
+SOURCE DETAILS EXTRACTED FROM THE TEMPLATE:
+${outlineLines}
+
+SOURCE RESUME:
+${input.sourceResume}
+
+TARGET ROLE:
+Job Title: ${input.jobTitle}
+Company: ${input.company}
+Job Description:
+${input.jobDescription}
+`;
+}
+
+async function rewriteWholeResume(
+  openai: OpenAI,
+  input: {
+    sourceResume: string;
+    jobTitle: string;
+    company: string;
+    jobDescription: string;
+    outline: ReturnType<typeof parseResumeSourceOutline>;
+    candidateName: string;
+  }
+) {
+  const completion = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-4-turbo",
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Follow instructions exactly. Return only the rewritten resume text, with no commentary.",
+      },
+      {
+        role: "user",
+        content: buildStylePreservingResumePrompt(input),
+      },
+    ],
+  });
+
+  return unwrapModelText(completion.choices[0]?.message?.content ?? "").trim();
 }
 
 async function rewriteBullet(
@@ -401,6 +478,32 @@ export async function generateResumeContent(input: {
     throw new Error("Source resume text is required for generation");
   }
 
+  const candidateName =
+    (input.candidateName ?? "").trim() ||
+    extractCandidateNameFromResumeText(sourceResume) ||
+    "Candidate";
+
+  const original = parseStructuredResume(sourceResume);
+  const outline = parseResumeSourceOutline(sourceResume);
+
+  if (!hasBullets(original)) {
+    const resumeMarkdown = await rewriteWholeResume(openai, {
+      sourceResume,
+      jobTitle: input.jobTitle,
+      company: input.company,
+      jobDescription: input.jobDescription,
+      outline,
+      candidateName,
+    });
+
+    return {
+      candidateName,
+      resumeMarkdown: resumeMarkdown || sourceResume,
+      coverLetterMarkdown: "",
+      validation: { ok: true },
+    };
+  }
+
   const structuredResult = await generateStructuredResume(openai, {
     sourceResume,
     jobDescription: [
@@ -414,11 +517,6 @@ export async function generateResumeContent(input: {
   if (!resumeMarkdown) {
     throw new Error("Resume generation produced an empty output");
   }
-
-  const candidateName =
-    (input.candidateName ?? "").trim() ||
-    extractCandidateNameFromResumeText(sourceResume) ||
-    "Candidate";
 
   return {
     candidateName,

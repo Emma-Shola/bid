@@ -11,6 +11,15 @@ type RenderLine = {
   lineHeight: number;
 };
 
+type ParsedResumeDocument = {
+  name: string;
+  intro: string[];
+  sections: Array<{
+    title: string;
+    entries: Array<{ kind: "bullet" | "paragraph"; text: string }>;
+  }>;
+};
+
 function escapePdfText(text: string) {
   return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
@@ -61,6 +70,88 @@ function maxCharsForLine(pageWidth: number, margin: number, indent: number, font
   const usable = Math.max(120, pageWidth - margin * 2 - indent);
   const approxCharWidth = Math.max(4.4, fontSize * 0.52);
   return Math.max(24, Math.floor(usable / approxCharWidth));
+}
+
+function renderDocumentLines(document: ParsedResumeDocument) {
+  const pageWidth = 595.28;
+  const margin = 46;
+  const lines: RenderLine[] = [];
+
+  if (document.name) {
+    const wrappedName = wrapByChars(document.name, maxCharsForLine(pageWidth, margin, 0, 18));
+    for (const wrappedLine of wrappedName) {
+      lines.push({
+        text: wrappedLine,
+        font: "bold",
+        fontSize: 18,
+        indent: 0,
+        lineHeight: 22,
+      });
+    }
+    lines.push({ text: "", font: "normal", fontSize: 10, indent: 0, lineHeight: 12 });
+  }
+
+  if (document.intro.length > 0) {
+    const introText = document.intro.join(" ");
+    const wrappedIntro = wrapByChars(introText, maxCharsForLine(pageWidth, margin, 0, 10));
+    for (const wrappedLine of wrappedIntro) {
+      lines.push({
+        text: wrappedLine,
+        font: "normal",
+        fontSize: 10,
+        indent: 0,
+        lineHeight: 14,
+      });
+    }
+    lines.push({ text: "", font: "normal", fontSize: 10, indent: 0, lineHeight: 12 });
+  }
+
+  for (const section of document.sections) {
+    const wrappedTitle = wrapByChars(section.title.toUpperCase(), maxCharsForLine(pageWidth, margin, 0, 11));
+    for (const wrappedLine of wrappedTitle) {
+      lines.push({
+        text: wrappedLine,
+        font: "bold",
+        fontSize: 11,
+        indent: 0,
+        lineHeight: 14,
+      });
+    }
+
+    lines.push({ text: "", font: "normal", fontSize: 10, indent: 0, lineHeight: 6 });
+
+    for (const entry of section.entries) {
+      if (entry.kind === "bullet") {
+        const wrappedBullet = wrapByChars(entry.text, maxCharsForLine(pageWidth, margin, 18, 10));
+        wrappedBullet.forEach((wrappedLine, index) => {
+          lines.push({
+            text: index === 0 ? `• ${wrappedLine}` : wrappedLine,
+            font: "normal",
+            fontSize: 10,
+            indent: index === 0 ? 10 : 18,
+            lineHeight: 14,
+          });
+        });
+      } else {
+        const wrappedParagraph = wrapByChars(entry.text, maxCharsForLine(pageWidth, margin, 0, 10));
+        for (const wrappedLine of wrappedParagraph) {
+          lines.push({
+            text: wrappedLine,
+            font: "normal",
+            fontSize: 10,
+            indent: 0,
+            lineHeight: 14,
+          });
+        }
+      }
+
+      lines.push({ text: "", font: "normal", fontSize: 10, indent: 0, lineHeight: 6 });
+    }
+
+    lines.push({ text: "", font: "normal", fontSize: 10, indent: 0, lineHeight: 10 });
+  }
+
+  return lines;
 }
 
 function markdownToRenderLines(markdown: string) {
@@ -167,11 +258,88 @@ function paginateLines(lines: RenderLine[], pageHeight: number, margin: number) 
   return pages;
 }
 
+function parseResumeMarkdown(markdown: string): ParsedResumeDocument {
+  const normalized = normalizeMarkdown(markdown);
+  const lines = normalized.split("\n");
+  const sections: ParsedResumeDocument["sections"] = [];
+  let name = "";
+  const intro: string[] = [];
+  let currentSection: ParsedResumeDocument["sections"][number] | null = null;
+
+  const sectionTitles = [
+    "Professional Summary",
+    "Summary",
+    "Key Skills",
+    "Skills",
+    "Work Experience",
+    "Experience",
+    "Education",
+  ];
+
+  const ensureSection = (title: string) => {
+    if (!currentSection || currentSection.title !== title) {
+      currentSection = { title, entries: [] };
+      sections.push(currentSection);
+    }
+    return currentSection;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    if (/^#\s+/.test(line)) {
+      const text = stripInlineMarkdown(line.replace(/^#\s+/, ""));
+      if (!name) {
+        name = text;
+      } else {
+        intro.push(text);
+      }
+      continue;
+    }
+
+    const plainSection = sectionTitles.find((title) => new RegExp(`^${title.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}:?$`, "i").test(line));
+    if (plainSection) {
+      currentSection = ensureSection(plainSection);
+      continue;
+    }
+
+    if (/^#{2,3}\s+/.test(line)) {
+      const title = stripInlineMarkdown(line.replace(/^#{2,3}\s+/, ""));
+      currentSection = ensureSection(title);
+      continue;
+    }
+
+    if (/^[-*\u2022]\s+/.test(line)) {
+      const targetSection = currentSection ?? ensureSection("Highlights");
+      targetSection.entries.push({ kind: "bullet", text: stripInlineMarkdown(line.replace(/^[-*\u2022]\s+/, "")) });
+      continue;
+    }
+
+    if (currentSection) {
+      currentSection.entries.push({ kind: "paragraph", text: stripInlineMarkdown(line) });
+    } else {
+      intro.push(stripInlineMarkdown(line));
+    }
+  }
+
+  return {
+    name,
+    intro,
+    sections,
+  };
+}
+
 function buildPdfBytes(content: string, _title: string) {
   const pageWidth = 595.28;
   const pageHeight = 841.89;
   const margin = 46;
-  const renderLines = markdownToRenderLines(content);
+  const parsed = parseResumeMarkdown(content);
+  const renderLines = parsed.sections.length > 0 || parsed.name || parsed.intro.length > 0
+    ? renderDocumentLines(parsed)
+    : markdownToRenderLines(content);
   const pages = paginateLines(renderLines, pageHeight, margin);
 
   const objects: string[] = [];
