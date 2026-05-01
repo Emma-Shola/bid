@@ -11,14 +11,7 @@ type RenderLine = {
   lineHeight: number;
 };
 
-type ParsedResumeDocument = {
-  name: string;
-  intro: string[];
-  sections: Array<{
-    title: string;
-    entries: Array<{ kind: "bullet" | "paragraph"; text: string }>;
-  }>;
-};
+import { parseResumeMarkdown, type ParsedResumeDocument } from "@/lib/resume-format";
 
 function escapePdfText(text: string) {
   return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -258,79 +251,7 @@ function paginateLines(lines: RenderLine[], pageHeight: number, margin: number) 
   return pages;
 }
 
-function parseResumeMarkdown(markdown: string): ParsedResumeDocument {
-  const normalized = normalizeMarkdown(markdown);
-  const lines = normalized.split("\n");
-  const sections: ParsedResumeDocument["sections"] = [];
-  let name = "";
-  const intro: string[] = [];
-  let currentSection: ParsedResumeDocument["sections"][number] | null = null;
-
-  const sectionTitles = [
-    "Professional Summary",
-    "Summary",
-    "Key Skills",
-    "Skills",
-    "Work Experience",
-    "Experience",
-    "Education",
-  ];
-
-  const ensureSection = (title: string) => {
-    if (!currentSection || currentSection.title !== title) {
-      currentSection = { title, entries: [] };
-      sections.push(currentSection);
-    }
-    return currentSection;
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
-
-    if (/^#\s+/.test(line)) {
-      const text = stripInlineMarkdown(line.replace(/^#\s+/, ""));
-      if (!name) {
-        name = text;
-      } else {
-        intro.push(text);
-      }
-      continue;
-    }
-
-    const plainSection = sectionTitles.find((title) => new RegExp(`^${title.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}:?$`, "i").test(line));
-    if (plainSection) {
-      currentSection = ensureSection(plainSection);
-      continue;
-    }
-
-    if (/^#{2,3}\s+/.test(line)) {
-      const title = stripInlineMarkdown(line.replace(/^#{2,3}\s+/, ""));
-      currentSection = ensureSection(title);
-      continue;
-    }
-
-    if (/^[-*\u2022]\s+/.test(line)) {
-      const targetSection = currentSection ?? ensureSection("Highlights");
-      targetSection.entries.push({ kind: "bullet", text: stripInlineMarkdown(line.replace(/^[-*\u2022]\s+/, "")) });
-      continue;
-    }
-
-    if (currentSection) {
-      currentSection.entries.push({ kind: "paragraph", text: stripInlineMarkdown(line) });
-    } else {
-      intro.push(stripInlineMarkdown(line));
-    }
-  }
-
-  return {
-    name,
-    intro,
-    sections,
-  };
-}
+// use canonical `parseResumeMarkdown` from resume-format.ts
 
 function buildPdfBytes(content: string, _title: string) {
   const pageWidth = 595.28;
