@@ -17,7 +17,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { downloadResumePdf } from "@/lib/pdf";
 import { downloadFromUrl } from "@/lib/download";
 import { normalizeGeneratedResumePreview } from "@/lib/resume-source";
 import { ResumeDocumentPreview } from "@/components/resume/ResumeDocumentPreview";
@@ -206,15 +205,6 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
     toast.success("Preview copied");
   }
 
-  function downloadResumePreview() {
-    if (!resumePreview) return;
-    downloadResumePdf({
-      title: `resume-${form.jobTitle.trim() || "draft"}`,
-      content: resumePreview,
-      structured,
-    });
-  }
-
   async function downloadGeneratedResume(format: "pdf" | "docx") {
     try {
       if (generatedResumeId) {
@@ -222,12 +212,7 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
         return;
       }
 
-      if (format === "docx") {
-        toast.error("Generate the resume first so we can export a DOCX file.");
-        return;
-      }
-
-      downloadResumePreview();
+      toast.error("Resume generation is still finishing up. Wait for it to complete before downloading.");
     } catch (error) {
       toast.error((error as Error).message || "Failed to download resume");
     }

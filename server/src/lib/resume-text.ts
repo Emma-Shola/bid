@@ -1,12 +1,42 @@
 import path from "node:path";
 import { extractTextWithOpenAIOCR } from "./openai-ocr";
 
+function stripRepeatedHeaderFooterLines(text: string) {
+  const lines = text.split("\n");
+  const counts = new Map<string, number>();
+
+  for (const line of lines) {
+    const key = line.trim().toLowerCase();
+    if (!key || key.length > 100) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const seen = new Set<string>();
+  const kept: string[] = [];
+
+  for (const line of lines) {
+    const key = line.trim().toLowerCase();
+    const isRepeatedBoilerplate = Boolean(key) && key.length <= 100 && (counts.get(key) ?? 0) >= 3;
+
+    if (isRepeatedBoilerplate) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join("\n");
+}
+
 function normalizeText(text: string) {
-  return text
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
+  return stripRepeatedHeaderFooterLines(
+    text
+      .replace(/\r\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim()
+  );
 }
 
 async function extractPdfText(buffer: Buffer) {

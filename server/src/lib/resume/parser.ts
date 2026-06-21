@@ -51,7 +51,8 @@ const PROMPT_TEMPLATE_MARKERS = [
 ];
 
 function isPaginationLine(line: string) {
-  return /^--\s*\d+\s+of\s+\d+\s*--$/i.test(normalizeWhitespace(line));
+  const text = normalizeWhitespace(line);
+  return /^--\s*\d+\s+of\s+\d+\s*--$/i.test(text) || /^page\s+\d+(\s+of\s+\d+)?$/i.test(text);
 }
 
 function detectSection(line: string): SectionKey | null {

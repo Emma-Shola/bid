@@ -118,7 +118,9 @@ export function validateTailoredResume(
   );
 
   if (sanitized.tailoredExperience.length !== source.experience.length) {
-    warnings.push("Tailored experience item count differs from the source resume; the exporter will merge by index");
+    issues.push(
+      `Tailored experience item count (${sanitized.tailoredExperience.length}) does not match the source resume (${source.experience.length}); the exporter merges by index, so a mismatch would pair bullets with the wrong role`
+    );
   }
 
   const experienceCount = Math.min(source.experience.length, sanitized.tailoredExperience.length);

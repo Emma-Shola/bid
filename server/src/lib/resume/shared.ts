@@ -18,6 +18,12 @@ export function normalizeKeyword(value: string) {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// Glues "Word & Word" together with non-breaking spaces so renderers never
+// wrap a line leaving a lone "&" stranded at the start or end of a line.
+export function preventOrphanAmpersand(value: string) {
+  return value.replace(/\s*&\s*/g, " & ");
+}
+
 export function dedupeStrings(values: string[]) {
   const seen = new Set<string>();
   const unique: string[] = [];

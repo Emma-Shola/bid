@@ -216,21 +216,26 @@ function pushSkill(groups: Map<string, string[]>, used: Set<string>, category: s
   used.add(key);
 }
 
+function groupSkillsByClassification(skills: string[]): ResumePreviewSkillCategory[] {
+  const groups = new Map<string, string[]>();
+  const used = new Set<string>();
+
+  for (const skill of skills) {
+    pushSkill(groups, used, classifySkill(skill), skill);
+  }
+
+  return SKILL_CATEGORY_ORDER.filter((category) => groups.has(category)).map((category) => ({
+    category,
+    skills: groups.get(category) ?? []
+  }));
+}
+
 function buildSkillCategories(categories: ResumePreviewSkillCategory[], tailoredSkills: string[]) {
   const priority = new Map(
     tailoredSkills.map((skill, index) => [normalizeText(skill).toLowerCase(), index])
   );
   const used = new Set<string>();
   const rendered: ResumePreviewSkillCategory[] = [];
-  const coreSkills = tailoredSkills.map((skill) => normalizeText(skill)).filter(Boolean);
-
-  if (coreSkills.length > 0) {
-    rendered.push({
-      category: "Core Technical Skills",
-      skills: coreSkills
-    });
-    coreSkills.forEach((skill) => used.add(skill.toLowerCase()));
-  }
 
   for (const category of categories) {
     const skills = normalizeList(category.skills)
@@ -374,7 +379,8 @@ export function buildResumePreviewModel(structured: GeneratedResumeStructured): 
   const tailored = structured.tailored;
   const candidateName = normalizeText(source.name) || "Candidate";
   const tailoredSkills = normalizeList(tailored.tailoredSkills);
-  const skillCategories = buildSkillCategories([], tailoredSkills);
+  const classifiedCategories = groupSkillsByClassification(tailoredSkills);
+  const skillCategories = buildSkillCategories(classifiedCategories, tailoredSkills);
 
   return {
     name: candidateName,

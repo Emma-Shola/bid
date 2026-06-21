@@ -1,7 +1,6 @@
 import { createElement } from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { AlignmentType, Document, Packer, Paragraph, TextRun } from "docx";
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import { buildFallbackTailoredResume } from "./validator";
 import { normalizeParsedResume } from "./normalizer";
 import { parseResumeText } from "./parser";
@@ -148,6 +147,20 @@ function pushSkill(
   const cleanCategory = normalizeSkillCategoryName(category);
   groups.set(cleanCategory, [...(groups.get(cleanCategory) ?? []), cleanSkill]);
   used.add(key);
+}
+
+function groupSkillsByClassification(skills: string[]): ResumeSkillCategory[] {
+  const groups = new Map<string, string[]>();
+  const used = new Set<string>();
+
+  for (const skill of skills) {
+    pushSkill(groups, used, classifySkill(skill), skill);
+  }
+
+  return SKILL_CATEGORY_ORDER.filter((category) => groups.has(category)).map((category) => ({
+    category,
+    skills: groups.get(category) ?? []
+  }));
 }
 
 function buildSkillCategories(
@@ -381,7 +394,8 @@ export function buildResumeExportModel(input: {
     tailored.tailoredSkills.map((skill) => normalizeWhitespace(skill))
   );
   const prioritizedSkills = dedupeStrings(tailoredSkills.map((skill) => normalizeWhitespace(skill)));
-  const skillCategories = buildSkillCategories([], prioritizedSkills, tailoredSkills);
+  const classifiedCategories = groupSkillsByClassification(tailoredSkills);
+  const skillCategories = buildSkillCategories(classifiedCategories, prioritizedSkills);
   const candidateName = normalizeWhitespace(source.name) || "Candidate";
   const experience = normalizeExportExperience(source.experience, tailored, candidateName);
 
@@ -421,306 +435,6 @@ export function buildResumeExportModelFromMarkdown(markdown: string, fallbackNam
     source: parsed,
     tailored: buildFallbackTailoredResume(parsed, parsed.title, "")
   });
-}
-
-type PdfLine = {
-  text: string;
-  font: "regular" | "bold" | "italic";
-  size: number;
-  indent: number;
-  height: number;
-  align?: "left" | "center";
-  secondaryText?: string;
-  labelWidth?: number;
-  gapWidth?: number;
-  chipWidth?: number;
-  chipHeight?: number;
-  characterSpacing?: number;
-  variant?:
-    | "body"
-    | "header-name"
-    | "header-contact"
-    | "header-title"
-    | "section-heading"
-    | "skill-row"
-    | "split-row"
-    | "experience-header"
-    | "company-line"
-    | "date-chip"
-    | "location"
-    | "bullet";
-};
-
-function wrapText(font: PDFFont, text: string, size: number, maxWidth: number) {
-  const words = normalizeWhitespace(text).split(/\s+/).filter(Boolean);
-  if (words.length === 0) {
-    return [""];
-  }
-
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (font.widthOfTextAtSize(next, size) > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-  }
-
-  if (current) {
-    lines.push(current);
-  }
-
-  return lines;
-}
-
-function addWrappedLines(
-  lines: PdfLine[],
-  font: PDFFont,
-  text: string,
-  options: {
-    size: number;
-    indent?: number;
-    maxWidth: number;
-    fontStyle: "regular" | "bold" | "italic";
-    height?: number;
-    align?: "left" | "center";
-    variant?: PdfLine["variant"];
-  }
-) {
-  const wrapped = wrapText(font, text, options.size, options.maxWidth);
-  for (const line of wrapped) {
-    lines.push({
-      text: line,
-      font: options.fontStyle,
-      size: options.size,
-      indent: options.indent ?? 0,
-      height: options.height ?? Math.round(options.size * 1.4),
-      align: options.align ?? "left",
-      variant: options.variant ?? "body"
-    });
-  }
-}
-
-function buildPdfLines(model: ResumeExportModel, fonts: { regular: PDFFont; bold: PDFFont; italic: PDFFont }) {
-  const { layout, typography } = ATS_CLASSIC_TEMPLATE;
-  const pageWidth = layout.pageWidth;
-  const margin = layout.margin;
-  const contentWidth = pageWidth - margin * 2;
-  const lines: PdfLine[] = [];
-  const bodyLineHeight = Math.round(typography.bodySize * typography.lineHeight);
-  const sectionHeadingHeight = Math.max(22, Math.round(typography.sectionHeadingSize * 1.15));
-  const headerNameHeight = Math.max(32, Math.round(typography.nameSize * 1.12));
-  const headerRoleHeight = Math.max(26, Math.round(typography.titleSize * 1.1));
-  const headerContactHeight = Math.max(18, Math.round(typography.subtextSize * 1.12));
-  const rowLeftSize = 17;
-  const rowRightSize = 15;
-
-  const addBulletLine = (text: string, indent = typography.bulletIndent, fontSize = typography.bodySize) => {
-    const wrapped = wrapText(fonts.regular, text, fontSize, contentWidth - indent);
-    wrapped.forEach((wrappedLine, index) => {
-      lines.push({
-        text: index === 0 ? `� ${wrappedLine}` : wrappedLine,
-        font: "regular",
-        size: fontSize,
-        indent: index === 0 ? indent : indent + 8,
-        height: bodyLineHeight,
-        variant: "bullet"
-      });
-    });
-  };
-
-  const addSectionHeading = (heading: string) => {
-    lines.push({
-      text: heading.toUpperCase(),
-      font: "bold",
-      size: typography.sectionHeadingSize,
-      indent: 0,
-      height: sectionHeadingHeight,
-      align: "left",
-      characterSpacing: 1.2,
-      variant: "section-heading"
-    });
-  };
-
-  const addSection = (heading: string, body: () => void) => {
-    if (lines.length > 0 && lines[lines.length - 1].text !== "") {
-      lines.push({ text: "", font: "regular", size: typography.bodySize, indent: 0, height: typography.sectionSpacing, variant: "body" });
-    }
-
-    addSectionHeading(heading);
-    body();
-    lines.push({ text: "", font: "regular", size: typography.bodySize, indent: 0, height: typography.sectionSpacing, variant: "body" });
-  };
-
-  addWrappedLines(lines, fonts.bold, model.name, {
-    size: typography.nameSize,
-    maxWidth: contentWidth,
-    fontStyle: "bold",
-    height: headerNameHeight,
-    align: "center",
-    variant: "header-name"
-  });
-
-  if (model.title) {
-    addWrappedLines(lines, fonts.bold, model.title, {
-      size: typography.titleSize,
-      maxWidth: contentWidth,
-      fontStyle: "bold",
-      height: headerRoleHeight,
-      align: "center",
-      variant: "header-title"
-    });
-  }
-
-  if (model.contactLine) {
-    addWrappedLines(lines, fonts.bold, model.contactLine, {
-      size: typography.subtextSize,
-      maxWidth: contentWidth,
-      fontStyle: "bold",
-      height: headerContactHeight,
-      align: "center",
-      variant: "header-contact"
-    });
-  }
-
-  if (model.linksLine) {
-    addWrappedLines(lines, fonts.bold, model.linksLine, {
-      size: Math.max(9, typography.subtextSize - 1),
-      maxWidth: contentWidth,
-      fontStyle: "bold",
-      height: headerContactHeight - 1,
-      align: "center",
-      variant: "header-contact"
-    });
-  }
-
-  lines.push({ text: "", font: "regular", size: typography.bodySize, indent: 0, height: typography.sectionSpacing, variant: "body" });
-
-  addSection("Professional Summary", () => {
-    if (model.summary) {
-      addWrappedLines(lines, fonts.regular, model.summary, {
-        size: typography.bodySize,
-        maxWidth: contentWidth,
-        fontStyle: "regular",
-        height: bodyLineHeight,
-        variant: "body"
-      });
-    }
-  });
-
-  addSection("Work Experience", () => {
-    for (const item of model.experience) {
-      lines.push({
-        text: item.role,
-        font: "bold",
-        size: rowLeftSize,
-        indent: 0,
-        height: 20,
-        secondaryText: item.duration,
-        variant: "experience-header"
-      });
-
-      lines.push({
-        text: item.company,
-        font: "bold",
-        size: typography.bodySize,
-        indent: 0,
-        height: 18,
-        secondaryText: item.location,
-        variant: "company-line"
-      });
-
-      for (const bullet of item.bullets) {
-        addBulletLine(bullet);
-      }
-
-      lines.push({
-        text: "",
-        font: "regular",
-        size: typography.bodySize,
-        indent: 0,
-        height: typography.itemSpacing + 4,
-        variant: "body"
-      });
-    }
-  });
-
-  if (model.education.length > 0) {
-    addSection("Education", () => {
-      for (const item of model.education) {
-        lines.push({
-          text: item.degree,
-          font: "bold",
-          size: rowLeftSize,
-          indent: 0,
-          height: 20,
-          secondaryText: item.duration,
-          variant: "experience-header"
-        });
-
-        lines.push({
-          text: item.school,
-          font: "bold",
-          size: typography.bodySize,
-          indent: 0,
-          height: 18,
-          secondaryText: item.location,
-          variant: "company-line"
-        });
-
-        for (const detail of item.details) {
-          addBulletLine(detail);
-        }
-
-        lines.push({
-          text: "",
-          font: "regular",
-          size: typography.bodySize,
-          indent: 0,
-          height: typography.itemSpacing + 4,
-          variant: "body"
-        });
-      }
-    });
-  }
-
-  if (model.certificates.length > 0) {
-    addSection("Certificates", () => {
-      for (const certificate of model.certificates) {
-        addBulletLine(certificate);
-      }
-    });
-  }
-
-  addSection("Technical Skills", () => {
-    if (model.skillCategories.length > 0) {
-      for (const category of model.skillCategories) {
-        const skillLine = `${category.category || "Skills"}: ${category.skills.join(", ")}`;
-        addBulletLine(skillLine);
-      }
-      return;
-    }
-
-    for (const skill of model.skills) {
-      addBulletLine(skill);
-    }
-  });
-
-  return lines;
-}
-
-function drawResumeFrame(_page: ReturnType<PDFDocument["addPage"]>, pageWidth: number, pageHeight: number) {
-  const margin = ATS_CLASSIC_TEMPLATE.layout.margin;
-  return {
-    contentX: margin,
-    contentWidth: pageWidth - margin * 2,
-    contentTop: pageHeight - margin + 2,
-    headerBottom: pageHeight - margin
-  };
 }
 
 export async function buildResumePdfBuffer(input: {

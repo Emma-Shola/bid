@@ -22,6 +22,12 @@ function text(value: unknown) {
   return String(value).trim();
 }
 
+// Glues "Word & Word" together with non-breaking spaces so the browser never
+// wraps a line leaving a lone "&" stranded at the start or end of a line.
+function preventOrphanAmpersand(value: string) {
+  return value.replace(/\s*&\s*/g, " & ");
+}
+
 function pickString(source: RecordLike, keys: string[]) {
   for (const key of keys) {
     const value = text(source[key]);
@@ -120,7 +126,7 @@ export function DocumentFlow(props: ResumeFlowProps) {
                 className="mt-[2px] text-[10.8px] font-semibold uppercase tracking-[0.06em] text-slate-700"
                 style={{ fontFamily: RESUME_RENDER_TOKENS.fonts.previewSans }}
               >
-                {title}
+                {preventOrphanAmpersand(title)}
               </div>
             ) : null}
           </div>
@@ -161,7 +167,7 @@ export function DocumentFlow(props: ResumeFlowProps) {
                     <div className="grid grid-cols-[minmax(0,1fr)_82px] items-baseline gap-2">
                       <div className="min-w-0">
                         <div className="text-[10.15px] font-bold tracking-[-0.01em] text-slate-950" style={{ fontFamily: RESUME_RENDER_TOKENS.fonts.previewSans }}>
-                          {role}
+                          {preventOrphanAmpersand(role)}
                         </div>
                       </div>
                       {date ? (

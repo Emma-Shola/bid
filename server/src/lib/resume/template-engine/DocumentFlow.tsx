@@ -2,6 +2,7 @@ import React from "react";
 import { Text, View } from "@react-pdf/renderer";
 import type { ReactNode } from "react";
 import type { ResumeExportModel } from "../exporter";
+import { preventOrphanAmpersand } from "../shared";
 import { Bullet } from "./Bullet";
 import { SectionHeading } from "./SectionHeading";
 import { resumePdfStyles as styles } from "./styles";
@@ -38,7 +39,7 @@ function ExperienceEntry({ item, index }: { item: ResumeExportModel["experience"
         <View style={styles.entryRow}>
           <View style={styles.entryLeft}>
             <Text style={styles.entryRole} widows={2} orphans={2}>
-              {item.role}
+              {preventOrphanAmpersand(item.role)}
             </Text>
           </View>
           <View style={styles.entryRight}>
@@ -48,7 +49,7 @@ function ExperienceEntry({ item, index }: { item: ResumeExportModel["experience"
         <View style={styles.entryRow}>
           <View style={styles.entryLeft}>
             <Text style={styles.entryCompany} widows={2} orphans={2}>
-              {item.company}
+              {preventOrphanAmpersand(item.company)}
             </Text>
           </View>
           <View style={styles.entryRight}>
