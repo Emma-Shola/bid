@@ -7,15 +7,18 @@ import { generateResumeContent } from "@/lib/openai";
 import { persistNotifications } from "@/lib/notifications";
 import { jsonError } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
-import { createBackgroundJob } from "@/lib/background-jobs";
+import { createBackgroundJob, markBackgroundJobQaRequired } from "@/lib/background-jobs";
 import { enqueueResumeGenerationJob } from "@/lib/background-queue";
 import { extractCandidateNameFromResumeText, resolveResumeSourceText } from "@/lib/resume-source";
+import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
+import { extractStructuredResumeFromText } from "@/lib/resume/structured-json";
+import { createGeneratedResumeRecord } from "@/lib/resume/persistence";
+import { toPrismaJson } from "@/lib/json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function resolveTemplateResume(input: {
-  bidderId: string;
   managerId: string | null;
   resumeId?: string;
 }) {
@@ -24,24 +27,116 @@ async function resolveTemplateResume(input: {
   }
 
   const looksLikeObjectId = (value: string) => /^[a-f\d]{24}$/i.test(value);
-
-  if (input.resumeId && looksLikeObjectId(input.resumeId)) {
-    return prisma.resume.findFirst({
-      where: {
-        id: input.resumeId,
-        managerId: input.managerId
-      }
-    });
-  }
-
-  return prisma.resume.findFirst({
+  const resumes = await prisma.resume.findMany({
     where: {
       managerId: input.managerId
     },
     orderBy: {
       updatedAt: "desc"
+    },
+    select: {
+      id: true,
+      managerId: true,
+      title: true,
+      originalText: true,
+      fileUrl: true,
+      createdAt: true,
+      updatedAt: true
     }
   });
+
+  if (input.resumeId && looksLikeObjectId(input.resumeId)) {
+    return resumes.find((resume) => resume.id === input.resumeId) ?? null;
+  }
+
+  return resumes.find((resume) => isRecoverableResumeSource(resume.originalText)) ?? resumes[0] ?? null;
+}
+
+async function finalizeGeneratedResume(input: {
+  authUserId: string;
+  templateResumeId: string;
+  jobTitle: string;
+  company: string;
+  jobDescription: string;
+  backgroundJobId: string;
+  mode: "inline" | "queued";
+  result: Awaited<ReturnType<typeof generateResumeContent>>;
+}) {
+  const { cache, ...publicResult } = input.result;
+  const requiresQa = !input.result.validation.ok;
+  const generatedResumeId =
+    cache.hit && cache.recordId
+      ? cache.recordId
+      : (
+          await createGeneratedResumeRecord({
+            resumeId: input.templateResumeId,
+            bidderId: input.authUserId,
+            jobTitle: input.jobTitle,
+            company: input.company,
+            jobDescription: input.jobDescription,
+            cacheFingerprint: cache.fingerprint,
+            modelName: cache.modelName,
+            promptVersion: cache.promptVersion,
+            result: input.result
+          })
+        ).id;
+
+  await prisma.auditLog.create({
+    data: {
+      userId: input.authUserId,
+      action: "resume.generated",
+      details: {
+        resumeId: input.templateResumeId,
+        generatedResumeId,
+        jobTitle: input.jobTitle,
+        company: input.company,
+        mode: input.mode
+      }
+    }
+  });
+
+  await persistNotifications([input.authUserId], {
+    type: requiresQa ? "resume.qa_required" : "resume.generated",
+    title: requiresQa ? "Resume needs review" : "Resume generated",
+    body: requiresQa
+      ? `A tailored resume was generated for ${input.jobTitle} at ${input.company}, but it needs QA review before download.`
+      : `A tailored resume was generated for ${input.jobTitle} at ${input.company}.`,
+    link: "/api/ai/generate-resume",
+    data: {
+      resumeId: input.templateResumeId,
+      generatedResumeId,
+      jobTitle: input.jobTitle,
+      company: input.company,
+      requiresQa
+    }
+  });
+
+  const terminalResult = {
+    ...publicResult,
+    meta: {
+      resumeId: input.templateResumeId,
+      generatedResumeId,
+      jobTitle: input.jobTitle,
+      company: input.company,
+      mode: input.mode,
+      requiresQa
+    }
+  };
+
+  if (requiresQa) {
+    await markBackgroundJobQaRequired(input.backgroundJobId, terminalResult);
+  } else {
+    await prisma.backgroundJob.update({
+      where: { id: input.backgroundJobId },
+      data: {
+        status: "completed",
+        result: toPrismaJson(terminalResult),
+        completedAt: new Date()
+      }
+    });
+  }
+
+  return { generatedResumeId, publicResult };
 }
 
 export async function POST(req: NextRequest) {
@@ -78,7 +173,6 @@ export async function POST(req: NextRequest) {
     }
 
     let templateResume = await resolveTemplateResume({
-      bidderId: auth.user.id,
       managerId: bidder.managerId,
       resumeId: parsed.data.resumeId
     });
@@ -87,9 +181,7 @@ export async function POST(req: NextRequest) {
       const profile = bidder.manager.managerProfile;
       const recoveredText =
         profile.templateResumeText?.trim() ||
-        (profile.templateResumeUrl
-          ? await resolveResumeSourceText({ resumeUrl: profile.templateResumeUrl })
-          : "");
+        (profile.templateResumeUrl ? await resolveResumeSourceText({ resumeUrl: profile.templateResumeUrl }) : "");
 
       if (recoveredText.trim()) {
         templateResume = await prisma.resume.create({
@@ -116,6 +208,19 @@ export async function POST(req: NextRequest) {
       return jsonError("Selected template has no usable text content.", 422);
     }
 
+    if (looksLikeResumeInstructionText(sourceResumeText) && !isRecoverableResumeSource(sourceResumeText)) {
+      const recoveredStructuredResume = extractStructuredResumeFromText(
+        sourceResumeText,
+        extractCandidateNameFromResumeText(sourceResumeText)
+      );
+      if (!recoveredStructuredResume) {
+        return jsonError(
+          "Selected resume template looks like an instruction prompt, not a real resume. Upload the original resume instead.",
+          422
+        );
+      }
+    }
+
     const candidateName = extractCandidateNameFromResumeText(sourceResumeText);
 
     const backgroundJob = await createBackgroundJob({
@@ -139,79 +244,31 @@ export async function POST(req: NextRequest) {
         resumeText: sourceResumeText,
         candidateName
       });
-      const preview = result.resumeMarkdown || result.coverLetterMarkdown || "";
 
-      const generated = await prisma.generatedResume.create({
-        data: {
-          resumeId: templateResume.id,
-          bidderId: auth.user.id,
-          jobTitle: parsed.data.jobTitle,
-          company: parsed.data.company,
-          jobDescription: parsed.data.jobDescription,
-          outputText: result.resumeMarkdown
-        },
-        select: {
-          id: true,
-          createdAt: true
-        }
+      const { publicResult, generatedResumeId } = await finalizeGeneratedResume({
+        authUserId: auth.user.id,
+        templateResumeId: templateResume.id,
+        jobTitle: parsed.data.jobTitle,
+        company: parsed.data.company,
+        jobDescription: parsed.data.jobDescription,
+        backgroundJobId: backgroundJob.id,
+        mode: "inline",
+        result
       });
 
-      await prisma.auditLog.create({
-        data: {
-          userId: auth.user.id,
-          action: "resume.generated",
-          details: {
-            resumeId: templateResume.id,
-            generatedResumeId: generated.id,
-            jobTitle: parsed.data.jobTitle,
-            company: parsed.data.company,
-            mode: "inline"
-          }
-        }
-      });
-
-      await persistNotifications([auth.user.id], {
-        type: "resume.generated",
-        title: "Resume generated",
-        body: `A tailored resume was generated for ${parsed.data.jobTitle} at ${parsed.data.company}.`,
-        link: "/api/ai/generate-resume",
-        data: {
-          resumeId: templateResume.id,
-          generatedResumeId: generated.id,
-          jobTitle: parsed.data.jobTitle,
-          company: parsed.data.company
-        }
-      });
-
-      await prisma.backgroundJob.update({
-        where: { id: backgroundJob.id },
-        data: {
-          status: "completed",
-          result: {
-            ...result,
-            meta: {
-              resumeId: templateResume.id,
-              generatedResumeId: generated.id,
-              jobTitle: parsed.data.jobTitle,
-              company: parsed.data.company,
-              mode: "inline"
-            }
-          },
-          completedAt: new Date()
-        }
-      });
+      const preview = publicResult.resumeMarkdown || publicResult.coverLetterMarkdown || "";
 
       return NextResponse.json(
         {
           data: {
             jobId: backgroundJob.id,
-            status: "completed",
+            status: result.validation.ok ? "completed" : "qa_required",
             resumeId: templateResume.id,
             preview,
-            ...result,
+            ...publicResult,
             meta: {
               resumeId: templateResume.id,
-              generatedResumeId: generated.id,
+              generatedResumeId,
               jobTitle: parsed.data.jobTitle,
               company: parsed.data.company,
               mode: "inline"
@@ -260,75 +317,28 @@ export async function POST(req: NextRequest) {
       candidateName
     });
 
-    const generated = await prisma.generatedResume.create({
-      data: {
-        resumeId: templateResume.id,
-        bidderId: auth.user.id,
-        jobTitle: parsed.data.jobTitle,
-        company: parsed.data.company,
-        jobDescription: parsed.data.jobDescription,
-        outputText: result.resumeMarkdown
-      },
-      select: {
-        id: true,
-        createdAt: true
-      }
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId: auth.user.id,
-        action: "resume.generated",
-        details: {
-          resumeId: templateResume.id,
-          generatedResumeId: generated.id,
-          jobTitle: parsed.data.jobTitle,
-          company: parsed.data.company
-        }
-      }
-    });
-
-    await persistNotifications([auth.user.id], {
-      type: "resume.generated",
-      title: "Resume generated",
-      body: `A tailored resume was generated for ${parsed.data.jobTitle} at ${parsed.data.company}.`,
-      link: "/api/ai/generate-resume",
-      data: {
-        resumeId: templateResume.id,
-        generatedResumeId: generated.id,
-        jobTitle: parsed.data.jobTitle,
-        company: parsed.data.company
-      }
-    });
-
-    await prisma.backgroundJob.update({
-      where: { id: backgroundJob.id },
-      data: {
-        status: "completed",
-        result: {
-          ...result,
-          meta: {
-            resumeId: templateResume.id,
-            generatedResumeId: generated.id,
-            jobTitle: parsed.data.jobTitle,
-            company: parsed.data.company
-          }
-        },
-        completedAt: new Date()
-      }
+    const { publicResult, generatedResumeId } = await finalizeGeneratedResume({
+      authUserId: auth.user.id,
+      templateResumeId: templateResume.id,
+      jobTitle: parsed.data.jobTitle,
+      company: parsed.data.company,
+      jobDescription: parsed.data.jobDescription,
+      backgroundJobId: backgroundJob.id,
+      mode: "queued",
+      result
     });
 
     return NextResponse.json(
       {
         data: {
           jobId: backgroundJob.id,
-          status: "completed",
+          status: result.validation.ok ? "completed" : "qa_required",
           resumeId: templateResume.id,
-          preview: result.resumeMarkdown || result.coverLetterMarkdown || "",
-          ...result,
+          preview: publicResult.resumeMarkdown || publicResult.coverLetterMarkdown || "",
+          ...publicResult,
           meta: {
             resumeId: templateResume.id,
-            generatedResumeId: generated.id,
+            generatedResumeId,
             jobTitle: parsed.data.jobTitle,
             company: parsed.data.company
           }
@@ -338,6 +348,19 @@ export async function POST(req: NextRequest) {
     );
   } catch (error) {
     console.error("resume generation POST failed", error);
-    return jsonError("Failed to generate resume", 500);
+
+    const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+
+    if (
+      /instruction-only txt files cannot be used as source resumes/i.test(message) ||
+      /source resume text is required/i.test(message) ||
+      /selected template has no usable text content/i.test(message) ||
+      /looks like a resume instruction prompt/i.test(message) ||
+      /no manager resume template found/i.test(message)
+    ) {
+      return jsonError(message || "Invalid resume source", 422);
+    }
+
+    return jsonError(message || "Failed to generate resume", 500);
   }
 }

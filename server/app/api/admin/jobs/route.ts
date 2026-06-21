@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
         : {})
     };
 
-    const statuses = ["queued", "processing", "retrying", "completed", "failed", "dead_letter"] as const;
+    const statuses = ["queued", "processing", "retrying", "qa_required", "completed", "failed", "dead_letter"] as const;
 
     const [items, total, statusCounts] = await Promise.all([
       prisma.backgroundJob.findMany({

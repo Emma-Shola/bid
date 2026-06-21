@@ -66,7 +66,7 @@ export interface Payment {
   applicationId?: string;
 }
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "dead_letter" | "processing" | "retrying" | "completed";
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "dead_letter" | "processing" | "retrying" | "completed" | "qa_required";
 export type JobKind = string;
 
 export interface BackgroundJob {
@@ -76,6 +76,8 @@ export interface BackgroundJob {
   attempts: number;
   maxAttempts: number;
   progress: number;
+  createdAt: string;
+  updatedAt?: string;
   startedAt?: string;
   finishedAt?: string;
   error?: string;
@@ -110,6 +112,7 @@ export interface ResumeTemplate {
   managerId: string;
   managerName?: string | null;
   title: string;
+  isUsableForGeneration?: boolean;
   fileUrl?: string | null;
   openUrl?: string | null;
   textLength: number;

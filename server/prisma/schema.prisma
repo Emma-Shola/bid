@@ -101,11 +101,18 @@ model GeneratedResume {
   jobTitle       String   @map("job_title")
   company        String
   jobDescription String   @map("job_description")
+  cacheFingerprint String? @map("cache_fingerprint")
+  modelName      String?  @map("model_name")
+  promptVersion  String?  @map("prompt_version")
   outputText     String   @map("output_text")
+  structuredJson Json?    @map("structured_json")
+  atsScore       Float?   @map("ats_score")
+  atsDetails     Json?    @map("ats_details")
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([resumeId, createdAt])
   @@index([bidderId, createdAt])
+  @@index([cacheFingerprint])
   @@map("generated_resumes")
 }
 

@@ -34,10 +34,14 @@ const map: Record<string, Variant> = {
   // jobs
   queued: "muted",
   running: "info",
+  generating: "info",
+  generated: "success",
+  downloaded: "success",
   succeeded: "success",
   processing: "info",
   retrying: "warning",
   completed: "success",
+  qa_required: "warning",
   dead_letter: "destructive",
 };
 

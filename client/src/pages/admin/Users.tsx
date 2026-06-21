@@ -44,14 +44,17 @@ export default function Users() {
     () => data.filter((item) => item.role === "manager"),
     [data]
   );
-  const managerResumeSummary = useMemo(() => {
-    const map = new Map<string, { count: number; latestUrl: string | null }>();
-    for (const resume of resumeTemplates) {
-      const current = map.get(resume.managerId) ?? { count: 0, latestUrl: null };
-      map.set(resume.managerId, {
-        count: current.count + 1,
-        latestUrl: current.latestUrl ?? resume.openUrl ?? resume.fileUrl ?? null
-      });
+    const managerResumeSummary = useMemo(() => {
+      const map = new Map<string, { count: number; latestUrl: string | null }>();
+      for (const resume of resumeTemplates) {
+        if (resume.id.startsWith("legacy-template-")) {
+          continue;
+        }
+        const current = map.get(resume.managerId) ?? { count: 0, latestUrl: null };
+        map.set(resume.managerId, {
+          count: current.count + 1,
+          latestUrl: current.latestUrl ?? resume.openUrl ?? resume.fileUrl ?? null
+        });
     }
     return map;
   }, [resumeTemplates]);

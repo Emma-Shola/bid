@@ -7,6 +7,7 @@ import { createNotifications } from "@/lib/notifications";
 import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { extractResumeText } from "@/lib/resume-text";
+import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
 import { saveResumeFile, validateResumeFile } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -48,6 +49,10 @@ export async function POST(req: NextRequest) {
       mimeType: file.type,
       bytes
     });
+
+    if (looksLikeResumeInstructionText(extracted.text || "") && !isRecoverableResumeSource(extracted.text || "")) {
+      return jsonError("That file looks like a resume instruction prompt, not a source resume. Upload the actual resume instead.", 422);
+    }
 
     const extractionFailed = !extracted.text || extracted.text.trim().length === 0;
 

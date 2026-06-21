@@ -9,6 +9,7 @@ import type {
   Role,
   User,
 } from "./types";
+import type { GeneratedResumeStructured } from "./resume-preview";
 import { extractResumePreview } from "./resume-output";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL?.trim().replace(/\/$/, "") ?? "";
@@ -168,6 +169,27 @@ async function request<T>(path: string, init: RequestInit = {}, allowRefresh = t
   return (body as ApiEnvelope<T>).data;
 }
 
+async function requestBlob(
+  path: string,
+  init: RequestInit = {},
+  allowRefresh = true,
+): Promise<Response> {
+  const response = await fetch(buildUrl(path), {
+    ...init,
+    credentials: "include",
+    headers: init.headers ?? {},
+  });
+
+  if (response.status === 401 && allowRefresh && !isAuthPath(path)) {
+    const refreshed = await tryRefreshSession();
+    if (refreshed) {
+      return requestBlob(path, init, false);
+    }
+  }
+
+  return response;
+}
+
 function mapUser(user: ApiUserRecord): User {
   const managerName = user.bidder?.manager?.managerProfile?.fullName ?? user.bidder?.manager?.username ?? null;
 
@@ -297,10 +319,12 @@ function mapBackgroundJob(job: {
   id: string;
   userId: string;
   type: string;
-  status: "queued" | "processing" | "retrying" | "completed" | "failed" | "dead_letter";
+  status: "queued" | "processing" | "retrying" | "completed" | "qa_required" | "failed" | "dead_letter";
   attempts: number;
   maxAttempts: number;
   progress?: number;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
   startedAt?: string | Date | null;
   completedAt?: string | Date | null;
   failedAt?: string | Date | null;
@@ -322,7 +346,9 @@ function mapBackgroundJob(job: {
     status: legacyStatus,
     attempts: job.attempts,
     maxAttempts: job.maxAttempts,
-    progress: job.progress ?? (job.status === "completed" ? 100 : 0),
+    progress: job.progress ?? (job.status === "completed" || job.status === "qa_required" ? 100 : 0),
+    createdAt: job.createdAt ? new Date(job.createdAt).toISOString() : new Date().toISOString(),
+    updatedAt: job.updatedAt ? new Date(job.updatedAt).toISOString() : undefined,
     startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : undefined,
     finishedAt: job.completedAt ? new Date(job.completedAt).toISOString() : job.failedAt ? new Date(job.failedAt).toISOString() : undefined,
     error: job.error ?? undefined,
@@ -361,6 +387,7 @@ function mapResumeTemplate(template: {
   id: string;
   managerId: string;
   title: string;
+  isUsableForGeneration?: boolean;
   fileUrl?: string | null;
   openUrl?: string | null;
   textLength: number;
@@ -380,6 +407,7 @@ function mapResumeTemplate(template: {
     managerId: template.managerId,
     managerName: template.manager?.managerProfile?.fullName ?? template.manager?.username ?? null,
     title: template.title,
+    isUsableForGeneration: template.isUsableForGeneration,
     fileUrl,
     openUrl,
     textLength: template.textLength,
@@ -797,14 +825,18 @@ export const api = {
     await request(`/api/admin/resumes/${resumeId}`, { method: "DELETE" });
   },
 
-  async deleteLatestManagerResume(managerId: string): Promise<void> {
-    const resumes = await api.listResumes({ managerId });
-    if (resumes.length === 0) {
-      throw new Error("No resume template found for this manager");
-    }
+    async deleteLatestManagerResume(managerId: string): Promise<void> {
+      const resumes = await api.listResumes({ managerId });
+      const realResumes = resumes
+        .filter((resume) => !resume.id.startsWith("legacy-template-"))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    await api.deleteResume(resumes[0].id);
-  },
+      if (realResumes.length === 0) {
+        throw new Error("No uploaded resume found for this manager");
+      }
+
+      await request(`/api/admin/resumes/${realResumes[0].id}`, { method: "DELETE" });
+    },
 
   async listBidders(): Promise<User[]> {
     const data = await request<{ items: Array<Parameters<typeof mapUser>[0]> }>(
@@ -854,8 +886,21 @@ export const api = {
     return data.items.map(mapBackgroundJob);
   },
 
+  async listBidderJobs(): Promise<BackgroundJob[]> {
+    const data = await request<{ items: Array<Parameters<typeof mapBackgroundJob>[0]> }>(
+      "/api/jobs?limit=100&page=1",
+      { method: "GET" },
+    );
+    return data.items.map(mapBackgroundJob);
+  },
+
   async getJob(id: string): Promise<BackgroundJob | undefined> {
     const jobs = await api.listJobs();
+    return jobs.find((job) => job.id === id);
+  },
+
+  async getBidderJob(id: string): Promise<BackgroundJob | undefined> {
+    const jobs = await api.listBidderJobs();
     return jobs.find((job) => job.id === id);
   },
 
@@ -891,6 +936,10 @@ export const api = {
     await request("/api/notifications", { method: "PATCH" });
   },
 
+  getGeneratedResumeExportUrl(generatedResumeId: string, format: "pdf" | "docx" = "pdf"): string {
+    return buildUrl(`/api/generated-resumes/${generatedResumeId}/export?format=${format}`);
+  },
+
   async generateResume(input: {
     resumeId?: string;
     jobTitle: string;
@@ -899,18 +948,42 @@ export const api = {
     preferInline?: boolean;
   }): Promise<{
     jobId: string;
-    status: "queued" | "completed";
+    status: "queued" | "completed" | "qa_required";
     preview?: string;
     message?: string;
+    generatedResumeId?: string;
+    structured?: GeneratedResumeStructured;
+    score?: {
+      overall: number;
+      keywordCoverage: number;
+      skillCoverage: number;
+      quantifiedAchievementScore: number;
+      bulletQualityScore: number;
+      matchedKeywords: string[];
+      missingKeywords: string[];
+    };
   }> {
     const data = await request<{
       jobId: string;
-      status: "queued" | "completed";
-      message?: string;
-      preview?: string;
-      resumeMarkdown?: string;
-      coverLetterMarkdown?: string;
-      result?: { preview?: string; markdown?: string; content?: string };
+      status: "queued" | "completed" | "qa_required";
+    message?: string;
+    preview?: string;
+    resumeMarkdown?: string;
+    coverLetterMarkdown?: string;
+      result?: { preview?: string; markdown?: string; content?: string; structured?: GeneratedResumeStructured };
+      structured?: GeneratedResumeStructured;
+      score?: {
+        overall: number;
+        keywordCoverage: number;
+        skillCoverage: number;
+        quantifiedAchievementScore: number;
+        bulletQualityScore: number;
+        matchedKeywords: string[];
+        missingKeywords: string[];
+      };
+      meta?: {
+        generatedResumeId?: string;
+      };
     }>(
       "/api/ai/generate-resume",
       {
@@ -929,6 +1002,64 @@ export const api = {
       status: data.status,
       preview,
       message: data.message,
+      generatedResumeId: data.meta?.generatedResumeId,
+      score: data.score,
+      structured: data.structured,
+    };
+  },
+
+  async askInterviewQuestion(input: {
+    question: string;
+    applicationId?: string;
+    jobTitle?: string;
+    company?: string;
+    jobDescription?: string;
+  }): Promise<{
+    answer: string;
+    keyPoints: string[];
+    followUpQuestions: string[];
+  }> {
+    const data = await request<{
+      answer: string;
+      keyPoints: string[];
+      followUpQuestions: string[];
+    }>(
+      "/api/ai/interview-answer",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+
+    return {
+      answer: data.answer,
+      keyPoints: data.keyPoints ?? [],
+      followUpQuestions: data.followUpQuestions ?? [],
+    };
+  },
+
+  async downloadGeneratedResumeExport(
+    generatedResumeId: string,
+    format: "pdf" | "docx" = "pdf",
+  ): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+    const response = await requestBlob(`/api/generated-resumes/${generatedResumeId}/export?format=${format}`, {
+      method: "GET",
+    });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => "");
+      throw new Error(message || `Failed to export resume (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const contentDisposition = response.headers.get("content-disposition") || "";
+    const filenameMatch = contentDisposition.match(/filename="([^"]+)"/i);
+    const fileName = filenameMatch?.[1] || `resume.${format}`;
+
+    return {
+      blob,
+      fileName,
+      contentType: response.headers.get("content-type") || blob.type || "application/octet-stream",
     };
   },
 };

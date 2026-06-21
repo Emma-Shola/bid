@@ -1,6 +1,7 @@
 import { Prisma, UserRole } from "@prisma/client";
 import { prisma } from "./prisma";
 import { publishEvent } from "./realtime.js";
+import { toPrismaJson } from "./json";
 
 export type BackgroundJobPayload = Prisma.InputJsonValue;
 
@@ -110,7 +111,20 @@ export async function markBackgroundJobRetrying(jobId: string, error: unknown, a
 export async function markBackgroundJobCompleted(jobId: string, result: Prisma.InputJsonValue) {
   const job = await updateBackgroundJob(jobId, {
     status: "completed",
-    result,
+    result: toPrismaJson(result),
+    completedAt: new Date(),
+    error: null,
+    failedAt: null
+  });
+
+  void publishEvent("background-job.updated", { job }, adminAudience);
+  return job;
+}
+
+export async function markBackgroundJobQaRequired(jobId: string, result: Prisma.InputJsonValue) {
+  const job = await updateBackgroundJob(jobId, {
+    status: "qa_required",
+    result: toPrismaJson(result),
     completedAt: new Date(),
     error: null,
     failedAt: null

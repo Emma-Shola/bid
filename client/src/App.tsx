@@ -19,6 +19,8 @@ import BidderDashboard from "./pages/bidder/Dashboard";
 import BidderApplications from "./pages/bidder/Applications";
 import ApplicationForm from "./pages/bidder/ApplicationForm";
 import ApplicationDetail from "./pages/bidder/ApplicationDetail";
+import InterviewCoach from "./pages/bidder/InterviewCoach";
+import BidderWorkspaces from "./pages/bidder/Workspaces";
 import ResumeGenerator from "./pages/bidder/Resume";
 import Notifications from "./pages/Notifications";
 
@@ -35,6 +37,7 @@ import Users from "./pages/admin/Users";
 import AuditLogs from "./pages/admin/AuditLogs";
 import Jobs from "./pages/admin/Jobs";
 import LiveMonitor from "./pages/admin/LiveMonitor";
+import ResumeInstructionBuilder from "./pages/admin/ResumeInstructionBuilder";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } },
@@ -66,6 +69,8 @@ const App = () => (
               <Route path="/bidder/applications/new" element={<ApplicationForm mode="create" />} />
               <Route path="/bidder/applications/:id" element={<ApplicationDetail />} />
               <Route path="/bidder/applications/:id/edit" element={<ApplicationForm mode="edit" />} />
+              <Route path="/bidder/interview" element={<InterviewCoach />} />
+              <Route path="/bidder/workspaces" element={<BidderWorkspaces />} />
               <Route path="/bidder/resume" element={<ResumeGenerator />} />
               <Route path="/bidder/notifications" element={<Notifications />} />
             </Route>
@@ -101,6 +106,7 @@ const App = () => (
               <Route path="/admin/audit" element={<AuditLogs />} />
               <Route path="/admin/jobs" element={<Jobs />} />
               <Route path="/admin/monitor" element={<LiveMonitor />} />
+              <Route path="/admin/resume-builder" element={<ResumeInstructionBuilder />} />
               <Route path="/admin/notifications" element={<Notifications />} />
             </Route>
 

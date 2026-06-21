@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { extractResumeText } from "@/lib/resume-text";
+import { extractResumeText } from "./resume-text";
 
 function inferMimeType(fileName: string) {
   const ext = path.extname(fileName).toLowerCase();
@@ -90,7 +90,7 @@ export function extractCandidateNameFromResumeText(text: string) {
 
   for (const line of candidates) {
     const words = line.split(/\s+/).filter(Boolean);
-    if (words.length >= 2 && words.length <= 4 && words.every((word) => /^[A-Za-zÀ-ÿ.'-]+$/.test(word))) {
+    if (words.length >= 2 && words.length <= 4 && words.every((word) => /^[\p{L}.'-]+$/u.test(word))) {
       return line;
     }
   }
@@ -227,4 +227,7 @@ export function parseResumeSourceOutline(text: string): ResumeSourceOutline {
     education,
   };
 }
+
+
+
 

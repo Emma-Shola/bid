@@ -7,6 +7,7 @@ import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { adminResumeCreateSchema } from "@/lib/validators";
 import { extractResumeText } from "@/lib/resume-text";
+import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
 import { saveResumeFile, validateResumeFile } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -72,6 +73,13 @@ export async function POST(req: NextRequest) {
     const originalText = parsed.data.originalText?.trim() || extractedText.trim();
     if (!originalText) {
       return jsonError("Could not extract resume text. Upload a clearer PDF/DOCX/TXT/image or paste the full resume text directly.", 422);
+    }
+
+    if (looksLikeResumeInstructionText(originalText) && !isRecoverableResumeSource(originalText)) {
+      return jsonError(
+        "That text looks like a resume instruction prompt, not a source resume. Upload the actual resume instead.",
+        422
+      );
     }
 
     const resume = await prisma.$transaction(async (tx) => {

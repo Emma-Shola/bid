@@ -1,80 +1,115 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 import { looksLikeResumeDocument, parseResumeMarkdown } from "@/lib/resume-format";
+import {
+  buildResumePreviewModel,
+  type GeneratedResumeStructured,
+  type ResumePreviewModel,
+} from "@/lib/resume-preview";
+import { ResumeTemplate } from "./template";
 
 type Props = HTMLAttributes<HTMLDivElement> & {
-  content: string;
+  content?: string;
+  structured?: GeneratedResumeStructured | null;
 };
 
-export function ResumeDocumentPreview({ content, className, ...props }: Props) {
-  if (!looksLikeResumeDocument(content)) {
-    return (
-      <div
-        className={cn(
-          "rounded-2xl border border-slate-200 bg-slate-50 px-6 py-8 text-sm leading-6 text-slate-600",
-          className,
-        )}
-        {...props}
-      >
-        <p className="font-medium text-slate-900">Resume preview</p>
-        <p className="mt-2 whitespace-pre-wrap">{content}</p>
-      </div>
-    );
-  }
-
+function buildFallbackModelFromMarkdown(content: string): ResumePreviewModel {
   const doc = parseResumeMarkdown(content);
+  const fallbackModel: ResumePreviewModel = {
+    name: doc.name || "Resume",
+    title: "",
+    contactLine: "",
+    linksLine: "",
+    summary: doc.intro.join(" "),
+    skillCategories: [],
+    skills: [],
+    experience: [],
+    education: [],
+    certificates: [],
+  };
 
+  const looksLikeCertification = (value: string) => {
+    const text = value.trim();
+    if (!text) return false;
+    if (/^(certificates?|certifications?|licenses?|licenses & certifications)$/i.test(text)) return false;
+    if (/\b(certified|certification|certificate|licensed|license)\b/i.test(text)) return true;
+    if (/\b(AWS|Microsoft|Google|Oracle|Cisco|CompTIA|PMP|CISSP|CISA|CEH|CKA|CKAD|ITIL|Scrum|Salesforce|Databricks|SnowPro|Docker|Kubernetes|Terraform|RHCSA|Red Hat|Linux Foundation)\b/i.test(text)) {
+      return true;
+    }
+    return false;
+  };
+
+  doc.sections.forEach((section) => {
+    const title = section.title.trim().toLowerCase();
+
+    if (/summary/.test(title) && !fallbackModel.summary) {
+      fallbackModel.summary = section.entries.map((entry) => entry.text).join(" ");
+      return;
+    }
+
+    if (/skills/.test(title)) {
+      fallbackModel.skills = section.entries.map((entry) => entry.text);
+      return;
+    }
+
+    if (/experience|work history|employment/.test(title)) {
+      fallbackModel.experience = section.entries.map((entry) => ({
+        role: "",
+        company: "",
+        duration: "",
+        location: "",
+        bullets: [entry.text],
+      }));
+      return;
+    }
+
+    if (/education/.test(title)) {
+      fallbackModel.education = section.entries.map((entry) => ({
+        school: "",
+        degree: "",
+        duration: "",
+        location: "",
+        details: [entry.text],
+      }));
+      return;
+    }
+
+    if (/^(certificate|certificates|certification|certifications|license|licenses|licenses & certifications)$/i.test(title)) {
+      fallbackModel.certificates = section.entries.map((entry) => entry.text).filter(looksLikeCertification);
+    }
+  });
+
+  return fallbackModel;
+}
+
+function EmptyState({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn(
-        "mx-auto w-full max-w-[820px] overflow-hidden rounded-2xl bg-white text-slate-900 shadow-sm ring-1 ring-slate-200",
-        className,
-      )}
+      className={cn("rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500", className)}
       {...props}
     >
-      <div className="border-b border-slate-200 px-8 py-7">
-        <div className="space-y-2">
-          <h3 className="text-3xl font-semibold tracking-tight text-slate-950">
-            {doc.name || "Resume"}
-          </h3>
-          {doc.intro.length > 0 && (
-            <p className="text-sm leading-6 text-slate-600">
-              {doc.intro.join(" ")}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="space-y-7 px-8 py-7">
-        {doc.sections.length > 0 ? (
-          doc.sections.map((section, index) => (
-            <section key={`${section.title}-${index}`} className="space-y-3">
-              <h4 className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                {section.title}
-              </h4>
-              <div className="space-y-3">
-                {section.entries.map((entry, entryIndex) =>
-                  entry.kind === "bullet" ? (
-                    <div key={`${section.title}-bullet-${entryIndex}`} className="flex gap-3">
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
-                      <p className="text-sm leading-6 text-slate-700">{entry.text}</p>
-                    </div>
-                  ) : (
-                    <p key={`${section.title}-paragraph-${entryIndex}`} className="text-sm leading-6 text-slate-700">
-                      {entry.text}
-                    </p>
-                  ),
-                )}
-              </div>
-            </section>
-          ))
-        ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
-            The generated resume will appear here.
-          </div>
-        )}
-      </div>
+      <p className="font-medium text-slate-900">Resume preview</p>
+      <p className="mt-2 whitespace-pre-wrap">The generated resume will appear here.</p>
     </div>
   );
 }
 
+export function ResumeDocumentPreview({ content = "", structured, className, ...props }: Props) {
+  if (structured) {
+    return (
+      <div className={cn(className)} {...props}>
+        <ResumeTemplate model={buildResumePreviewModel(structured)} />
+      </div>
+    );
+  }
+
+  if (content.trim() && looksLikeResumeDocument(content)) {
+    return (
+      <div className={cn(className)} {...props}>
+        <ResumeTemplate model={buildFallbackModelFromMarkdown(content)} />
+      </div>
+    );
+  }
+
+  return <EmptyState className={className} {...props} />;
+}

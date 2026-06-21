@@ -5,6 +5,7 @@ import { getAuthUser } from "@/lib/rbac";
 import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { resumeListQuerySchema } from "@/lib/validators";
+import { isRecoverableResumeSource } from "@/lib/resume/content-signals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -126,11 +127,12 @@ export async function GET(req: NextRequest) {
             id: `legacy-template-${fallbackManagerId}`,
             managerId: fallbackManagerId,
             title: `${manager.managerProfile?.fullName || manager.username} - Manager Template`,
-          fileUrl: manager.managerProfile?.templateResumeUrl ?? null,
-          openUrl: manager.managerProfile?.templateResumeUrl ? `/api/resumes/legacy-template-${fallbackManagerId}/file` : null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          textLength: manager.managerProfile?.templateResumeText?.length ?? 0,
+            isUsableForGeneration: isRecoverableResumeSource(manager.managerProfile?.templateResumeText ?? ""),
+            fileUrl: manager.managerProfile?.templateResumeUrl ?? null,
+            openUrl: manager.managerProfile?.templateResumeUrl ? `/api/resumes/legacy-template-${fallbackManagerId}/file` : null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            textLength: manager.managerProfile?.templateResumeText?.length ?? 0,
             manager: {
               id: manager.id,
               username: manager.username,
@@ -159,6 +161,7 @@ export async function GET(req: NextRequest) {
         id: item.id,
         managerId: item.managerId,
         title: item.title,
+        isUsableForGeneration: isRecoverableResumeSource(item.originalText),
         fileUrl: item.fileUrl,
         openUrl: item.fileUrl ? `/api/resumes/${item.id}/file` : null,
         createdAt: item.createdAt,

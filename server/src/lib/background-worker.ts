@@ -3,11 +3,13 @@ import { Prisma, UserRole } from "@prisma/client";
 import { BACKGROUND_QUEUE_NAME, createBullmqConnection, enqueueNotificationJob } from "./background-queue";
 import { prisma } from "./prisma";
 import { generateResumeContent } from "./openai";
+import { createGeneratedResumeRecord } from "./resume/persistence";
 import { publishEvent } from "./realtime.js";
 import {
   markBackgroundJobCompleted,
   markBackgroundJobDeadLetter,
   markBackgroundJobProcessing,
+  markBackgroundJobQaRequired,
   markBackgroundJobRetrying
 } from "./background-jobs";
 import { getBackofficeRecipientIds, persistNotifications } from "./notifications";
@@ -61,10 +63,7 @@ function isNotificationJob(data: unknown): data is NotificationJobData {
 }
 
 function getBackgroundJobId(job: import("bullmq").Job) {
-  const data = job.data as
-    | { backgroundJobId?: string; jobId?: string }
-    | undefined;
-
+  const data = job.data as { backgroundJobId?: string; jobId?: string } | undefined;
   return data?.backgroundJobId ?? data?.jobId ?? String(job.id ?? "");
 }
 
@@ -81,20 +80,25 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
   await markBackgroundJobProcessing(data.jobId, getCurrentAttempts(job, data.baseAttempts ?? 0));
 
   const result = await generateResumeContent(data.payload);
+  const { cache, ...publicResult } = result;
+  const generatedResumeId =
+    cache.hit && cache.recordId
+      ? cache.recordId
+      : (
+          await createGeneratedResumeRecord({
+            resumeId: data.payload.resumeId,
+            bidderId: data.userId,
+            jobTitle: data.payload.jobTitle,
+            company: data.payload.company,
+            jobDescription: data.payload.jobDescription,
+            cacheFingerprint: cache.fingerprint,
+            modelName: cache.modelName,
+            promptVersion: cache.promptVersion,
+            result
+          })
+        ).id;
 
-  const generated = await prisma.generatedResume.create({
-    data: {
-      resumeId: data.payload.resumeId,
-      bidderId: data.userId,
-      jobTitle: data.payload.jobTitle,
-      company: data.payload.company,
-      jobDescription: data.payload.jobDescription,
-      outputText: result.resumeMarkdown
-    },
-    select: {
-      id: true
-    }
-  });
+  const requiresQa = !result.validation.ok;
 
   await prisma.auditLog.create({
     data: {
@@ -102,7 +106,7 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
       action: "resume.generated",
       details: {
         resumeId: data.payload.resumeId,
-        generatedResumeId: generated.id,
+        generatedResumeId,
         backgroundJobId: data.jobId,
         jobTitle: data.payload.jobTitle,
         company: data.payload.company
@@ -110,22 +114,28 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
     }
   });
 
-  await markBackgroundJobCompleted(data.jobId, {
-    ...result,
+  const terminalResult = {
+    ...publicResult,
     meta: {
       resumeId: data.payload.resumeId,
-      generatedResumeId: generated.id,
+      generatedResumeId,
       jobTitle: data.payload.jobTitle,
       company: data.payload.company
     }
-  });
+  };
+
+  if (requiresQa) {
+    await markBackgroundJobQaRequired(data.jobId, terminalResult);
+  } else {
+    await markBackgroundJobCompleted(data.jobId, terminalResult);
+  }
 
   void publishEvent(
     "background-job.updated",
     {
       jobId: data.jobId,
       type: "resume.generate",
-      status: "completed",
+      status: requiresQa ? "qa_required" : "completed",
       attempts: getCurrentAttempts(job, data.baseAttempts ?? 0),
       userId: data.userId
     },
@@ -137,16 +147,19 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
   await enqueueNotificationJob({
     userIds: [data.userId],
     notification: {
-      type: "resume.generated",
-      title: "Resume generated",
-      body: `A tailored resume was generated for ${data.payload.jobTitle} at ${data.payload.company}.`,
+      type: requiresQa ? "resume.qa_required" : "resume.generated",
+      title: requiresQa ? "Resume needs review" : "Resume generated",
+      body: requiresQa
+        ? `A tailored resume was generated for ${data.payload.jobTitle} at ${data.payload.company}, but it needs QA review before download.`
+        : `A tailored resume was generated for ${data.payload.jobTitle} at ${data.payload.company}.`,
       link: `/api/jobs/${data.jobId}`,
       data: {
         resumeId: data.payload.resumeId,
-        generatedResumeId: generated.id,
+        generatedResumeId,
         backgroundJobId: data.jobId,
         jobTitle: data.payload.jobTitle,
-        company: data.payload.company
+        company: data.payload.company,
+        requiresQa
       }
     }
   }).catch((error) => {
@@ -211,7 +224,7 @@ export function createBackgroundWorker() {
     },
     {
       connection: createBullmqConnection(),
-      concurrency: 5
+      concurrency: 3
     }
   );
 

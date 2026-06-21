@@ -11,11 +11,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { downloadResumePdf } from "@/lib/pdf";
-import { looksLikeResumeDocument } from "@/lib/resume-format";
+import { downloadFromUrl } from "@/lib/download";
 import { normalizeGeneratedResumePreview } from "@/lib/resume-source";
 import { ResumeDocumentPreview } from "@/components/resume/ResumeDocumentPreview";
 import { useChannel, type RealtimeEvent } from "@/lib/realtime";
+import type { GeneratedResumeStructured } from "@/lib/resume-preview";
 import type { Application, ApplicationStatus } from "@/lib/types";
 
 const STATUSES: ApplicationStatus[] = ["submitted", "reviewed", "interviewed", "rejected", "hired"];
@@ -50,6 +57,17 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
   const [resumePreview, setResumePreview] = useState("");
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
   const [resumeStatus, setResumeStatus] = useState<string | null>(null);
+  const [generatedResumeId, setGeneratedResumeId] = useState<string | null>(null);
+  const [structured, setStructured] = useState<GeneratedResumeStructured | null>(null);
+  const [score, setScore] = useState<{
+    overall: number;
+    keywordCoverage: number;
+    skillCoverage: number;
+    quantifiedAchievementScore: number;
+    bulletQualityScore: number;
+    matchedKeywords: string[];
+    missingKeywords: string[];
+  } | null>(null);
   const [generatingResume, setGeneratingResume] = useState(false);
   const [selectedResumeId, setSelectedResumeId] = useState<string>("");
   const draftStorageKey = user?.id ? `topbrass:bidder:application-draft:${user.id}` : null;
@@ -98,6 +116,9 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
         resumePreview?: string;
         resumeJobId?: string | null;
         resumeStatus?: string | null;
+        generatedResumeId?: string | null;
+        structured?: GeneratedResumeStructured | null;
+        score?: typeof score;
       };
       if (parsed.form) {
         setForm((current) => ({ ...current, ...parsed.form }));
@@ -106,6 +127,9 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
       if (parsed.resumePreview) setResumePreview(parsed.resumePreview);
       if (typeof parsed.resumeJobId !== "undefined") setResumeJobId(parsed.resumeJobId ?? null);
       if (typeof parsed.resumeStatus !== "undefined") setResumeStatus(parsed.resumeStatus ?? null);
+      if (typeof parsed.generatedResumeId !== "undefined") setGeneratedResumeId(parsed.generatedResumeId ?? null);
+      if (typeof parsed.structured !== "undefined") setStructured(parsed.structured ?? null);
+      if (typeof parsed.score !== "undefined") setScore(parsed.score ?? null);
     } catch {
       // Ignore corrupted local draft.
     }
@@ -120,10 +144,13 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
         selectedResumeId,
         resumePreview,
         resumeJobId,
-        resumeStatus
+        resumeStatus,
+        generatedResumeId,
+        structured,
+        score
       })
     );
-  }, [mode, draftStorageKey, form, selectedResumeId, resumePreview, resumeJobId, resumeStatus]);
+  }, [mode, draftStorageKey, form, selectedResumeId, resumePreview, resumeJobId, resumeStatus, generatedResumeId, structured, score]);
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -141,6 +168,9 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
     onSuccess: (result) => {
       setResumeJobId(result.jobId);
       setResumeStatus(result.status);
+      setGeneratedResumeId(result.generatedResumeId ?? null);
+      setStructured(result.structured ?? null);
+      setScore(result.score ?? null);
       setResumePreview(
         result.preview
           ? normalizeGeneratedResumePreview(result.preview, "")
@@ -181,15 +211,63 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
     downloadResumePdf({
       title: `resume-${form.jobTitle.trim() || "draft"}`,
       content: resumePreview,
+      structured,
     });
   }
 
-  useChannel<RealtimeEvent<{ job: { id: string; status: string; result?: { preview?: string; markdown?: string; content?: string }; error?: string } }>>(
+  async function downloadGeneratedResume(format: "pdf" | "docx") {
+    try {
+      if (generatedResumeId) {
+        downloadFromUrl(api.getGeneratedResumeExportUrl(generatedResumeId, format));
+        return;
+      }
+
+      if (format === "docx") {
+        toast.error("Generate the resume first so we can export a DOCX file.");
+        return;
+      }
+
+      downloadResumePreview();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to download resume");
+    }
+  }
+
+  useChannel<
+    RealtimeEvent<{
+      job: {
+        id: string;
+        status: string;
+        result?: {
+          preview?: string;
+          markdown?: string;
+          content?: string;
+          structured?: GeneratedResumeStructured;
+          meta?: { generatedResumeId?: string };
+          score?: {
+            overall: number;
+            keywordCoverage: number;
+            skillCoverage: number;
+            quantifiedAchievementScore: number;
+            bulletQualityScore: number;
+            matchedKeywords: string[];
+            missingKeywords: string[];
+          };
+        };
+        error?: string;
+      };
+    }>
+  >(
     "background-job.updated",
     (event) => {
       if (!resumeJobId || event.data.job.id !== resumeJobId) return;
       setResumeStatus(event.data.job.status);
+
       if (event.data.job.status === "completed") {
+        setGeneratedResumeId(event.data.job.result?.meta?.generatedResumeId ?? generatedResumeId);
+        setStructured(event.data.job.result?.structured ?? structured);
+        setScore(event.data.job.result?.score ?? score);
+
         const preview = normalizeGeneratedResumePreview(
           typeof event.data.job.result?.preview === "string"
             ? event.data.job.result.preview
@@ -201,6 +279,7 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
         }
         toast.success("Resume preview is ready");
       }
+
       if (event.data.job.status === "failed" || event.data.job.status === "dead_letter") {
         setResumePreview(event.data.job.error ?? "Resume generation failed.");
       }
@@ -369,16 +448,10 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
               </div>
               <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
                 <div className="rounded-md border border-border bg-muted/30 p-4">
-                  {resumePreview ? (
-                    looksLikeResumeDocument(resumePreview) ? (
-                      <div className="max-h-[760px] overflow-auto">
-                        <ResumeDocumentPreview content={resumePreview} />
-                      </div>
-                    ) : (
-                      <div className="rounded-md border border-dashed border-border bg-background px-6 py-10 text-center text-sm text-muted-foreground">
-                        {resumePreview}
-                      </div>
-                    )
+                  {resumePreview || structured ? (
+                    <div className="max-h-[760px] overflow-auto">
+                      <ResumeDocumentPreview content={resumePreview} structured={structured} />
+                    </div>
                   ) : (
                     <div className="flex min-h-[280px] items-center justify-center rounded-md border border-dashed border-border bg-background px-6 text-center text-sm text-muted-foreground">
                       Fill in the job details and generate a resume preview here.
@@ -386,12 +459,20 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
                   )}
                 </div>
                 <div className="flex flex-row gap-2 lg:flex-col">
-                  <Button type="button" variant="outline" onClick={copyResumePreview} disabled={!resumePreview}>
+                  <Button type="button" variant="outline" onClick={copyResumePreview} disabled={!resumePreview && !structured}>
                     <Copy className="mr-1.5 h-4 w-4" /> Copy
                   </Button>
-                  <Button type="button" variant="outline" onClick={downloadResumePreview} disabled={!resumePreview || !looksLikeResumeDocument(resumePreview)}>
-                    <Download className="mr-1.5 h-4 w-4" /> Download
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" disabled={!resumePreview && !structured}>
+                        <Download className="mr-1.5 h-4 w-4" /> Download
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={8}>
+                      <DropdownMenuItem onClick={() => downloadGeneratedResume("pdf")}>Download PDF</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => downloadGeneratedResume("docx")}>Download DOCX</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button
                     type="button"
                     variant="ghost"
@@ -399,8 +480,11 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
                       setResumePreview("");
                       setResumeJobId(null);
                       setResumeStatus(null);
+                      setGeneratedResumeId(null);
+                      setStructured(null);
+                      setScore(null);
                     }}
-                    disabled={!resumePreview}
+                    disabled={!resumePreview && !structured}
                   >
                     <RefreshCw className="mr-1.5 h-4 w-4" /> Clear
                   </Button>
@@ -413,8 +497,22 @@ export default function ApplicationForm({ mode }: { mode: "create" | "edit" }) {
                   </span>
                 )}
                 {resumeStatus && <span className="capitalize">Status: {resumeStatus}</span>}
-                {resumePreview && <span>Tip: keep it as a draft or reuse parts in your notes.</span>}
+                {(resumePreview || structured) && <span>Tip: keep it as a draft or reuse parts in your notes.</span>}
               </div>
+              {score && (
+                <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-foreground">ATS score</span>
+                    <span className="font-semibold text-foreground">{Math.round(score.overall)}%</span>
+                  </div>
+                  <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                    <span>Keyword coverage: {Math.round(score.keywordCoverage)}%</span>
+                    <span>Skill coverage: {Math.round(score.skillCoverage)}%</span>
+                    <span>Quantified achievements: {Math.round(score.quantifiedAchievementScore)}%</span>
+                    <span>Bullet quality: {Math.round(score.bulletQualityScore)}%</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

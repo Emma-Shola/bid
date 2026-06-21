@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ExternalLink, Pencil, Trash2 } from "lucide-react";
+import { ExternalLink, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
@@ -38,6 +38,21 @@ export default function ApplicationDetail() {
         description={`${data.company} · ${data.status.replace("_", " ")}`}
         actions={
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() =>
+                navigate(
+                  `/bidder/interview?${new URLSearchParams({
+                    applicationId: data.id,
+                    jobTitle: data.jobTitle,
+                    company: data.company,
+                    jobDescription: data.jobDescription,
+                  }).toString()}`,
+                )
+              }
+            >
+              <Sparkles className="mr-1.5 h-4 w-4" /> Interview AI
+            </Button>
             <Button variant="outline" onClick={() => navigate(`/bidder/applications/${data.id}/edit`)}>
               <Pencil className="mr-1.5 h-4 w-4" /> Edit
             </Button>

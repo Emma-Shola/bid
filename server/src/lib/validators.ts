@@ -138,7 +138,7 @@ export const backgroundJobListQuerySchema = z.object({
   userId: z.string().min(1).optional(),
   type: z.string().trim().max(100).optional(),
   status: z
-    .enum(["queued", "processing", "retrying", "completed", "failed", "dead_letter"])
+    .enum(["queued", "processing", "retrying", "completed", "qa_required", "failed", "dead_letter"])
     .optional(),
   q: z.string().trim().max(255).optional(),
   from: z.string().datetime().optional(),

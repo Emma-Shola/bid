@@ -37,6 +37,10 @@ export async function DELETE(req: NextRequest, context: { params: { id: string }
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      await tx.generatedResume.deleteMany({
+        where: { resumeId }
+      });
+
       await tx.resume.delete({
         where: { id: resumeId }
       });
@@ -53,10 +57,15 @@ export async function DELETE(req: NextRequest, context: { params: { id: string }
 
       await tx.managerProfile.updateMany({
         where: { id: existing.managerId },
-        data: {
-          templateResumeUrl: latest?.fileUrl ?? null,
-          templateResumeText: latest?.originalText ?? null
-        }
+        data: latest
+          ? {
+              templateResumeUrl: latest.fileUrl ?? null,
+              templateResumeText: latest.originalText ?? null
+            }
+          : {
+              templateResumeUrl: null,
+              templateResumeText: null
+            }
       });
 
       await tx.auditLog.create({
@@ -79,16 +88,20 @@ export async function DELETE(req: NextRequest, context: { params: { id: string }
       };
     });
 
-    await createNotifications([result.managerId], {
-      type: "resume.deleted",
-      title: "Resume template removed",
-      body: `An admin removed "${existing.title}" from your templates.`,
-      link: "/manager/resumes",
-      data: {
-        deletedResumeId: result.deletedResumeId,
-        activeResumeId: result.activeResumeId
-      }
-    });
+    try {
+      await createNotifications([result.managerId], {
+        type: "resume.deleted",
+        title: "Resume template removed",
+        body: `An admin removed "${existing.title}" from your templates.`,
+        link: "/manager/resumes",
+        data: {
+          deletedResumeId: result.deletedResumeId,
+          activeResumeId: result.activeResumeId
+        }
+      });
+    } catch (notificationError) {
+      console.warn("admin resumes DELETE notification failed", notificationError);
+    }
 
     return jsonOk(result);
   } catch (error) {

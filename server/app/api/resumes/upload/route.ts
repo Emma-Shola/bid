@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/rbac";
 import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
+import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -119,6 +120,13 @@ export async function POST(req: NextRequest) {
     if (!finalText || finalText.trim().length < 20) {
       return jsonError(
         "Could not extract resume text. Upload a clearer PDF/DOCX/TXT/image or paste the full resume text directly.",
+        422
+      );
+    }
+
+    if (looksLikeResumeInstructionText(finalText) && !isRecoverableResumeSource(finalText)) {
+      return jsonError(
+        "That text looks like a resume instruction prompt, not a source resume. Upload the actual resume instead.",
         422
       );
     }
