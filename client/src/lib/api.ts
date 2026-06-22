@@ -353,6 +353,13 @@ function mapBackgroundJob(job: {
     finishedAt: job.completedAt ? new Date(job.completedAt).toISOString() : job.failedAt ? new Date(job.failedAt).toISOString() : undefined,
     error: job.error ?? undefined,
     payload: job.payload ?? undefined,
+    // This was previously dropped entirely, even though the input carries it.
+    // Every consumer that reads generatedResumeId/preview/structured off a
+    // polled job (download buttons, the Preview dialog, auto-save-to-folder)
+    // depends on this field — without it, those silently went blank as soon
+    // as the 10s poll or any query invalidation replaced the realtime-fed
+    // optimistic row with a "mapped" one that had no result at all.
+    result: job.result ?? undefined,
   };
 }
 
@@ -1042,12 +1049,25 @@ export const api = {
     generatedResumeId: string,
     format: "pdf" | "docx" = "pdf",
   ): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+    console.log(`[resume-download] GET /api/generated-resumes/${generatedResumeId}/export?format=${format}`);
     const response = await requestBlob(`/api/generated-resumes/${generatedResumeId}/export?format=${format}`, {
       method: "GET",
     });
 
     if (!response.ok) {
-      const message = await response.text().catch(() => "");
+      const rawBody = await response.text().catch(() => "");
+      // The export route returns a JSON { error, details } body on failure,
+      // not plain text. Without this parse, every failure toast showed the
+      // raw JSON blob (e.g. `{"error":"Generated resume is missing export
+      // data"}`) instead of a readable message.
+      let message = rawBody;
+      try {
+        const parsed = JSON.parse(rawBody) as { error?: string };
+        if (parsed?.error) message = parsed.error;
+      } catch {
+        // Body wasn't JSON; fall back to the raw text as-is.
+      }
+      console.error(`[resume-download] export request failed status=${response.status} generatedResumeId=${generatedResumeId} format=${format} body=${rawBody}`);
       throw new Error(message || `Failed to export resume (${response.status})`);
     }
 
@@ -1055,6 +1075,7 @@ export const api = {
     const contentDisposition = response.headers.get("content-disposition") || "";
     const filenameMatch = contentDisposition.match(/filename="([^"]+)"/i);
     const fileName = filenameMatch?.[1] || `resume.${format}`;
+    console.log(`[resume-download] export request succeeded generatedResumeId=${generatedResumeId} format=${format} size=${blob.size} bytes fileName="${fileName}"`);
 
     return {
       blob,

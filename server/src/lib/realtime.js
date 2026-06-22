@@ -26,15 +26,19 @@ function matchesAudience(user, audience) {
     return false;
   }
 
-  if (Array.isArray(audience.userIds) && audience.userIds.length > 0) {
-    return audience.userIds.includes(user.id);
+  const hasUserIds = Array.isArray(audience.userIds) && audience.userIds.length > 0;
+  const hasRoles = Array.isArray(audience.roles) && audience.roles.length > 0;
+
+  // No targeting filters at all means "everyone". Otherwise a socket matches
+  // if it satisfies EITHER filter (union), not just the first one present —
+  // callers rely on combining "the owning user" with "admin/manager roles"
+  // in a single audience (see applications/route.ts), so these must not be
+  // mutually exclusive.
+  if (!hasUserIds && !hasRoles) {
+    return true;
   }
 
-  if (Array.isArray(audience.roles) && audience.roles.length > 0) {
-    return audience.roles.includes(user.role);
-  }
-
-  return true;
+  return (hasUserIds && audience.userIds.includes(user.id)) || (hasRoles && audience.roles.includes(user.role));
 }
 
 function safeSend(socket, payload) {

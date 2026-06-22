@@ -124,25 +124,21 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
     }
   };
 
+  console.log(
+    `[background-worker] resume.generate finished job=${data.jobId} userId=${data.userId} requiresQa=${requiresQa} generatedResumeId=${generatedResumeId}`
+  );
+
+  // markBackgroundJobQaRequired/markBackgroundJobCompleted already publish a
+  // correctly-shaped { job } event to both admins and the owning bidder
+  // (see background-jobs.ts). A second, differently-shaped event used to be
+  // published here too, admin-only and without a `job` wrapper, so the
+  // bidder's client-side listener (which checks for `event.data.job`) always
+  // ignored it — it was dead weight and has been removed.
   if (requiresQa) {
     await markBackgroundJobQaRequired(data.jobId, terminalResult);
   } else {
     await markBackgroundJobCompleted(data.jobId, terminalResult);
   }
-
-  void publishEvent(
-    "background-job.updated",
-    {
-      jobId: data.jobId,
-      type: "resume.generate",
-      status: requiresQa ? "qa_required" : "completed",
-      attempts: getCurrentAttempts(job, data.baseAttempts ?? 0),
-      userId: data.userId
-    },
-    {
-      roles: [UserRole.admin]
-    }
-  );
 
   await enqueueNotificationJob({
     userIds: [data.userId],
@@ -277,23 +273,15 @@ export function createBackgroundWorker() {
       return;
     }
 
+    console.log(`[background-worker] job=${backgroundJobId} attempt=${attempts}/${maxAttempts} failed, retrying: ${error instanceof Error ? error.message : String(error)}`);
+
+    // markBackgroundJobRetrying already publishes a correctly-shaped { job }
+    // event to admins and the owning bidder (background-jobs.ts). The
+    // separate admin-only, wrongly-shaped event that used to be published
+    // here was dead weight for the same reason as the one removed above.
     await markBackgroundJobRetrying(backgroundJobId, error, attempts).catch((markError) => {
       console.warn("failed to mark retrying job", markError);
     });
-
-    void publishEvent(
-      "background-job.updated",
-      {
-        jobId: backgroundJobId,
-        type: job.name,
-        status: "retrying",
-        attempts,
-        error: error instanceof Error ? error.message : String(error)
-      },
-      {
-        roles: [UserRole.admin]
-      }
-    );
   });
 
   return worker;

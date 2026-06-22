@@ -5,9 +5,18 @@ import { toPrismaJson } from "./json";
 
 export type BackgroundJobPayload = Prisma.InputJsonValue;
 
-const adminAudience = {
-  roles: [UserRole.admin]
-};
+// Background job events must reach both admins (who monitor the queue) and
+// the bidder who actually owns the job (whose UI drives auto-download and
+// live preview off this same event). Previously every call site here used
+// an admin-only audience, so the owning bidder's socket never matched and
+// the frontend silently fell back to 10s polling for every status transition.
+function jobAudience(job: { id: string; userId: string; status: string }) {
+  console.log(`[background-jobs] publishing status=${job.status} job=${job.id} ownerUserId=${job.userId}`);
+  return {
+    roles: [UserRole.admin],
+    userIds: [job.userId]
+  };
+}
 
 export async function createBackgroundJob(input: {
   userId: string;
@@ -23,7 +32,7 @@ export async function createBackgroundJob(input: {
     }
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -73,7 +82,7 @@ export async function markBackgroundJobProcessing(jobId: string, attempts: numbe
     completedAt: null
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -88,7 +97,7 @@ export async function markBackgroundJobQueued(jobId: string, attempts: number) {
     deadLetterReason: null
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -104,7 +113,7 @@ export async function markBackgroundJobRetrying(jobId: string, error: unknown, a
     deadLetterReason: null
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -117,7 +126,7 @@ export async function markBackgroundJobCompleted(jobId: string, result: Prisma.I
     failedAt: null
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -130,7 +139,7 @@ export async function markBackgroundJobQaRequired(jobId: string, result: Prisma.
     failedAt: null
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -143,7 +152,7 @@ export async function markBackgroundJobFailed(jobId: string, error: unknown, att
     failedAt: new Date()
   });
 
-  void publishEvent("background-job.updated", { job }, adminAudience);
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }
 
@@ -158,6 +167,6 @@ export async function markBackgroundJobDeadLetter(jobId: string, error: unknown,
     deadLetterReason: message
   });
 
-  void publishEvent("background-job.updated", { job });
+  void publishEvent("background-job.updated", { job }, jobAudience(job));
   return job;
 }

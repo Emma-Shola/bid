@@ -401,22 +401,56 @@ export async function loadDownloadFolderName(userId: string) {
 }
 
 export async function saveBlobToSelectedFolder(userId: string, fileName: string, blob: Blob) {
-  const handle = await getStoredDirectoryHandle(userId);
+  // Every step here can throw for reasons that have nothing to do with the
+  // generated file itself (revoked OS-level folder permission, the handle's
+  // target folder having been moved/deleted, IndexedDB being unavailable in
+  // a private/incognito context, etc). Callers treat any thrown error as a
+  // hard "download failed" — so this function must never let an environment
+  // problem surface as anything other than a clean { saved: false, reason }
+  // the caller can fall back from.
+  let handle: DirectoryHandleLike | null;
+  try {
+    handle = await getStoredDirectoryHandle(userId);
+  } catch (error) {
+    console.warn("[bidder-queue-storage] failed to read stored directory handle", error);
+    return { saved: false, reason: "Could not access the saved download folder reference." };
+  }
+
   if (!handle) {
+    console.log("[bidder-queue-storage] no download folder selected; skipping auto-save");
     return { saved: false, reason: "No download folder selected." };
   }
 
-  const allowed = await ensureWritablePermission(handle);
+  console.log(`[bidder-queue-storage] attempting auto-save to folder "${handle.name}" file="${fileName}"`);
+
+  let allowed: boolean;
+  try {
+    allowed = await ensureWritablePermission(handle);
+  } catch (error) {
+    // requestPermission() throws (rather than resolving "denied") when it is
+    // called outside a user-gesture context, which is exactly how this gets
+    // invoked when triggered by a realtime/poll callback rather than a click.
+    console.warn("[bidder-queue-storage] permission check/request threw, treating as denied", error);
+    allowed = false;
+  }
+
   if (!allowed) {
+    console.warn(`[bidder-queue-storage] write permission denied for folder "${handle.name}"`);
     return { saved: false, reason: "Permission to write to the folder was denied." };
   }
 
   const safeName = sanitizeResumeFileName(fileName);
-  const fileHandle = await handle.getFileHandle(safeName, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(blob);
-  await writable.close();
+  try {
+    const fileHandle = await handle.getFileHandle(safeName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    console.warn(`[bidder-queue-storage] write to folder "${handle.name}" failed`, error);
+    return { saved: false, reason: error instanceof Error ? error.message : "Writing the file to the selected folder failed." };
+  }
 
+  console.log(`[bidder-queue-storage] auto-save succeeded folder="${handle.name}" file="${safeName}"`);
   return {
     saved: true,
     folderName: handle.name || "Selected folder",

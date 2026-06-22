@@ -159,20 +159,32 @@ async function loadExportPayload(generated: GeneratedResumeExportRecord | null) 
 }
 
 export async function GET(req: NextRequest, context: { params: { id: string } }) {
+  const generatedResumeId = context.params.id;
+  const log = (message: string) => console.log(`[resume-export] id=${generatedResumeId} ${message}`);
+  log("request received");
+
   try {
     const limited = await rateLimit(req, { key: "generated-resumes:export", limit: 60, windowMs: 60_000 });
-    if (limited) return applyCorsHeaders(req, limited);
+    if (limited) {
+      log("rejected: rate limited");
+      return applyCorsHeaders(req, limited);
+    }
 
     const auth = await getAuthUser(req);
-    if (!auth) return applyCorsHeaders(req, jsonError("Unauthorized", 401));
+    if (!auth) {
+      log("rejected: no valid session/auth cookie");
+      return applyCorsHeaders(req, jsonError("Unauthorized", 401));
+    }
+    log(`auth ok userId=${auth.user.id} role=${auth.user.role}`);
 
     const format = (req.nextUrl.searchParams.get("format") || "pdf").toLowerCase();
     if (format !== "pdf" && format !== "docx") {
+      log(`rejected: unsupported format "${format}"`);
       return applyCorsHeaders(req, jsonError("Unsupported export format", 422));
     }
 
     const generated = await prisma.generatedResume.findUnique({
-      where: { id: context.params.id },
+      where: { id: generatedResumeId },
       select: {
         id: true,
         bidderId: true,
@@ -195,8 +207,10 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
     });
 
     if (!generated) {
+      log("rejected: no GeneratedResume record found for this id");
       return applyCorsHeaders(req, jsonError("Generated resume not found", 404));
     }
+    log(`record found bidderId=${generated.bidderId} managerId=${generated.resume.managerId}`);
 
       const allowed =
         auth.user.role === UserRole.admin ||
@@ -204,13 +218,16 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
         (auth.user.role === UserRole.manager && auth.user.id === generated.resume.managerId);
 
     if (!allowed) {
+      log(`rejected: userId=${auth.user.id} role=${auth.user.role} is not the owning bidder/manager/admin`);
       return applyCorsHeaders(req, jsonError("Forbidden", 403));
     }
 
     const exportPayload = await loadExportPayload(generated);
     if (!exportPayload) {
+      log("rejected: loadExportPayload returned null (no usable parsed/structured resume source)");
       return applyCorsHeaders(req, jsonError("Generated resume is missing export data", 422));
     }
+    log(`export payload ready experienceCount=${exportPayload.source.experience.length} format=${format}`);
 
     const buffer =
       format === "docx"
@@ -222,6 +239,7 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
             source: exportPayload.source,
             tailored: exportPayload.tailored
           });
+    log(`buffer built size=${buffer.length} bytes`);
 
     const fileBase = sanitizeFileName(
       [generated.resume.title || generated.jobTitle, generated.company, format].filter(Boolean).join("-")
@@ -240,9 +258,10 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
       }
     });
     response.headers.set("Access-Control-Expose-Headers", "Content-Disposition, Content-Type");
+    log(`responding 200 fileName="${fileBase}.${format}"`);
     return applyCorsHeaders(req, response);
   } catch (error) {
-    console.error("generated resume export GET failed", error);
+    console.error(`[resume-export] id=${generatedResumeId} threw during export`, error);
     return applyCorsHeaders(req, jsonError("Failed to export resume", 500));
   }
 }

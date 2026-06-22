@@ -144,10 +144,17 @@ function getGeneratedResumeId(job: BackgroundJob) {
 
 function getJobPreview(job: BackgroundJob) {
   const result = asRecord(job.result);
+  // The persisted BackgroundJob.result for resume.generate jobs stores the
+  // rendered text under `resumeMarkdown` (see pipeline.ts/background-worker.ts),
+  // not `preview`/`markdown`/`content` — those only ever existed on the
+  // synchronous HTTP response shape. Without this fallback every job read
+  // back from the queue (polling or realtime) had an empty preview.
   return (
     (typeof result.preview === "string" && result.preview) ||
+    (typeof result.resumeMarkdown === "string" && result.resumeMarkdown) ||
     (typeof result.markdown === "string" && result.markdown) ||
     (typeof result.content === "string" && result.content) ||
+    (typeof result.coverLetterMarkdown === "string" && result.coverLetterMarkdown) ||
     ""
   );
 }
@@ -803,12 +810,19 @@ export default function ResumeQueueStudio() {
   });
 
   async function autoSaveGeneratedResume(targetJobId: string | undefined, generatedId: string, statusLabel: string) {
-    if (!user?.id) return;
+    const log = (message: string) => console.log(`[resume-download] autoSave job=${targetJobId ?? "?"} generatedId=${generatedId} ${message}`);
+
+    if (!user?.id) {
+      log("aborted: no authenticated user");
+      return;
+    }
     const dedupeKey = targetJobId ?? generatedId;
     const state = autoSaveStateRef.current.get(dedupeKey);
     if (state === "saving" || state === "saved" || state === "downloaded") {
+      log(`skipped: dedupe state is already "${state}"`);
       return;
     }
+    log(`starting (previous state: ${state ?? "none"})`);
     autoSaveStateRef.current.set(dedupeKey, "saving");
     setJobDeliveryStates((current) => {
       const next = { ...current };
@@ -817,7 +831,9 @@ export default function ResumeQueueStudio() {
     });
 
     try {
+      log("fetching export blob from server");
       const { blob, fileName } = await api.downloadGeneratedResumeExport(generatedId, "pdf");
+      log(`export fetched ok, size=${blob.size} bytes fileName="${fileName}"`);
       const fallbackJob = queueJobs.find((job) => job.id === targetJobId);
       const fallbackName = sanitizeResumeFileName(
         fileName || (fallbackJob ? getFileNameFromJob(fallbackJob) : `resume_${generatedId}.pdf`),
@@ -825,6 +841,7 @@ export default function ResumeQueueStudio() {
 
       const saveResult = await saveBlobToSelectedFolder(user.id, fallbackName, blob);
       if (saveResult.saved) {
+        log(`saved to folder "${saveResult.folderName}" as "${saveResult.fileName}"`);
         autoSaveStateRef.current.set(dedupeKey, "saved");
         setJobDeliveryStates((current) => {
           const next = { ...current };
@@ -849,6 +866,7 @@ export default function ResumeQueueStudio() {
         return;
       }
 
+      log(`folder save skipped/failed (${saveResult.reason}); falling back to browser download`);
       downloadBlob(blob, fallbackName);
       autoSaveStateRef.current.set(dedupeKey, "downloaded");
       setJobDeliveryStates((current) => {
@@ -856,8 +874,14 @@ export default function ResumeQueueStudio() {
         next[dedupeKey] = "downloaded";
         return next;
       });
-      toast.warning("Auto-save failed, so the file was downloaded in the browser instead.");
+      toast.warning(
+        saveResult.reason === "No download folder selected."
+          ? "No download folder selected, so the file was downloaded in the browser instead."
+          : `Auto-save to your folder failed (${saveResult.reason}), so the file was downloaded in the browser instead.`,
+      );
     } catch (error) {
+      log(`failed: ${(error as Error).message ?? error}`);
+      console.error("[resume-download] autoSaveGeneratedResume threw", error);
       autoSaveStateRef.current.set(dedupeKey, "failed");
       setJobDeliveryStates((current) => {
         const next = { ...current };
@@ -1093,16 +1117,21 @@ export default function ResumeQueueStudio() {
 
   async function manualDownload(job: QueueViewJob, format: "pdf" | "docx" = "pdf") {
     const generatedResumeId = getGeneratedResumeId(job);
+    console.log(`[resume-download] manualDownload click job=${job.id} format=${format} generatedResumeId=${generatedResumeId || "(missing)"}`);
     if (!generatedResumeId) {
+      console.warn(`[resume-download] manualDownload aborted: job=${job.id} has no generatedResumeId in job.result.meta`);
       toast.error("This resume is not ready to download yet.");
       return;
     }
 
     try {
+      console.log(`[resume-download] manualDownload fetching export job=${job.id} generatedResumeId=${generatedResumeId}`);
       const { blob, fileName } = await api.downloadGeneratedResumeExport(generatedResumeId, format);
+      console.log(`[resume-download] manualDownload export fetched job=${job.id} size=${blob.size} bytes fileName="${fileName}"`);
       downloadBlob(blob, sanitizeResumeFileName(fileName));
       toast.success(`${format.toUpperCase()} download started`);
     } catch (error) {
+      console.error(`[resume-download] manualDownload failed job=${job.id} generatedResumeId=${generatedResumeId}`, error);
       toast.error((error as Error).message || "Failed to download the resume");
     }
   }
