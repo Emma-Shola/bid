@@ -1,50 +1,44 @@
 import React from "react";
 import { Text, View } from "@react-pdf/renderer";
 import type { ResumeExportModel } from "../exporter";
+import { preventOrphanAmpersand } from "../shared";
 import { Bullet } from "./Bullet";
 import { SectionHeading } from "./SectionHeading";
-import { resumePdfStyles as styles } from "./styles";
+import { resumePdfStyles as s } from "./styles";
 
-type ExperienceSectionProps = Pick<ResumeExportModel, "experience">;
-
-export function ExperienceSection({ experience }: ExperienceSectionProps) {
-  if (experience.length === 0) {
-    return null;
-  }
+export function ExperienceSection({ experience }: Pick<ResumeExportModel, "experience">) {
+  if (experience.length === 0) return null;
 
   return (
-    <View style={styles.section}>
-      <SectionHeading>Work Experience</SectionHeading>
-      <View style={styles.sectionBody}>
-        {experience.map((item, index) => (
-          <View key={`${item.company}-${item.role}-${index}`} style={styles.entry}>
-            <View style={styles.entryRow}>
-              <View style={styles.entryLeft}>
-                <Text style={styles.entryRole}>{item.role}</Text>
+    <View style={s.section}>
+      <SectionHeading>Experience</SectionHeading>
+      {experience.map((item, i) => {
+        const companyLine = [item.company, item.location].filter(Boolean).join(" – ");
+        return (
+          <View key={`${item.company}-${i}`} style={s.entry}>
+            <View wrap={false}>
+              <View style={s.roleDateRow}>
+                <View style={s.roleCol}>
+                  <Text style={s.roleText}>{preventOrphanAmpersand(item.role)}</Text>
+                </View>
+                <View style={s.dateCol}>
+                  <Text style={s.dateText}>{item.duration || " "}</Text>
+                </View>
               </View>
-              <View style={styles.entryRight}>
-                {item.duration ? <Text style={styles.entryDate}>{item.duration}</Text> : <Text style={styles.entryDate}> </Text>}
-              </View>
+              {companyLine ? (
+                <Text style={s.companyLine}>{preventOrphanAmpersand(companyLine)}</Text>
+              ) : null}
             </View>
-            <View style={styles.entryRow}>
-              <View style={styles.entryLeft}>
-                <Text style={styles.entryCompany}>{item.company}</Text>
+            {item.bullets.length > 0 ? (
+              <View style={s.bulletsWrap}>
+                {item.bullets.map((b, j) => (
+                  <Bullet key={j}>{b}</Bullet>
+                ))}
               </View>
-              <View style={styles.entryRight}>
-                {item.location ? <Text style={styles.entryLocation}>{item.location}</Text> : <Text style={styles.entryLocation}> </Text>}
-              </View>
-            </View>
-            <View style={styles.entryBody}>
-              {item.bullets.map((bullet, bulletIndex) => (
-                <Bullet key={`${item.company}-${index}-${bulletIndex}`}>{bullet}</Bullet>
-              ))}
-            </View>
+            ) : null}
           </View>
-        ))}
-      </View>
+        );
+      })}
     </View>
   );
 }
-
-
-

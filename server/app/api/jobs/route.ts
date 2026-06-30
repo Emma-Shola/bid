@@ -62,16 +62,25 @@ export async function GET(req: NextRequest) {
 
     const statuses = ["queued", "processing", "retrying", "qa_required", "completed", "failed", "dead_letter"] as const;
 
-    const [items, total, statusCounts] = await Promise.all([
+    const [items, statusGroups] = await Promise.all([
       prisma.backgroundJob.findMany({
         where,
         orderBy: { [sortBy]: sortOrder },
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.backgroundJob.count({ where }),
-      Promise.all(statuses.map((jobStatus) => prisma.backgroundJob.count({ where: { ...where, status: jobStatus } }))),
+      prisma.backgroundJob.groupBy({
+        by: ["status"],
+        where,
+        _count: { _all: true },
+      }),
     ]);
+
+    const total = statusGroups.reduce((sum, g) => sum + g._count._all, 0);
+    const counts = statuses.reduce<Record<string, number>>((acc, s) => {
+      acc[s] = statusGroups.find((g) => g.status === s)?._count._all ?? 0;
+      return acc;
+    }, {});
 
     return jsonOk({
       items,
@@ -80,10 +89,7 @@ export async function GET(req: NextRequest) {
         limit,
         total,
         pages: Math.ceil(total / limit),
-        counts: statuses.reduce<Record<string, number>>((acc, jobStatus, index) => {
-          acc[jobStatus] = statusCounts[index] ?? 0;
-          return acc;
-        }, {}),
+        counts,
       },
     });
   } catch (error) {

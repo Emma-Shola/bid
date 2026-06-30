@@ -1,19 +1,17 @@
-import { extractCandidateNameFromResumeText } from "../resume-source";
 import { analyzeJobDescription } from "./jd";
 import { buildResumeGenerationFingerprint, loadCachedGeneratedResumeResult } from "./cache";
 import { normalizeParsedResume } from "./normalizer";
-import { parseResumeText } from "./parser";
 import { buildResumeExportModel } from "./exporter";
 import { buildResumeDebugRunId, createResumeDebugSession } from "./debug";
 import { renderResumeMarkdown } from "./renderer";
 import { scoreTailoredResume } from "./scoring";
 import { buildFallbackTailoredResume, validateTailoredResume } from "./validator";
 import { getResumeGenerationModel, parseTailoredResumeOutput, repairTailoredResumeRaw, tailorResumeRawWithRetry } from "./llm";
-import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "./content-signals";
 import { type TailoredResume } from "./types";
 import { RESUME_GENERATION_PROMPT_VERSION } from "./config";
 import { buildInitialGapAnalysis, finalizeGapAnalysis } from "./gap-analysis";
 import { buildProfileSkeleton } from "./profile-skeleton";
+import { CandidateProfileSchema, candidateProfileToParsedResume, type CandidateProfile } from "./candidate-profile";
 
 export type GeneratedResumePipelineResult = Awaited<ReturnType<typeof generateDeterministicResumeContent>>;
 
@@ -21,37 +19,29 @@ export async function generateDeterministicResumeContent(input: {
   jobTitle: string;
   company: string;
   jobDescription: string;
-  resumeText?: string;
   candidateName?: string;
+  candidateProfile: CandidateProfile | unknown;
+  resumeRulesText?: string;
 }) {
-  const sourceResumeText = (input.resumeText || "").trim();
-  if (!sourceResumeText) {
-    throw new Error("Source resume text is required for generation");
-  }
-
-  if (looksLikeResumeInstructionText(sourceResumeText) && !isRecoverableResumeSource(sourceResumeText)) {
-    throw new Error("Instruction-only TXT files cannot be used as source resumes. Upload the original resume instead.");
-  }
+  const candidateProfile = CandidateProfileSchema.parse(input.candidateProfile);
+  const candidateLabel = candidateProfile.personalInfo.name || input.candidateName || "Candidate";
 
   const debugSession = createResumeDebugSession({
     runId: buildResumeDebugRunId({
-      sourceText: sourceResumeText,
+      sourceText: JSON.stringify(candidateProfile),
       jobTitle: input.jobTitle,
       company: input.company,
       jobDescription: input.jobDescription,
-      candidateName: input.candidateName || extractCandidateNameFromResumeText(sourceResumeText)
+      candidateName: candidateLabel
     }),
-    label: input.candidateName || extractCandidateNameFromResumeText(sourceResumeText) || "Candidate"
+    label: candidateLabel
   });
 
   try {
-    const parsed = parseResumeText({
-    text: sourceResumeText,
-    candidateName: input.candidateName || extractCandidateNameFromResumeText(sourceResumeText)
-  });
+    const parsed = candidateProfileToParsedResume(candidateProfile, input.jobTitle);
     debugSession.capture("parsed", parsed);
 
-    const normalized = normalizeParsedResume(parsed, input.candidateName || extractCandidateNameFromResumeText(sourceResumeText));
+    const normalized = normalizeParsedResume(parsed, candidateLabel);
     debugSession.capture("normalized", normalized);
     const profileSkeleton = buildProfileSkeleton({
       source: normalized,
@@ -81,7 +71,8 @@ export async function generateDeterministicResumeContent(input: {
       source: profileSkeleton,
       jobAnalysis,
       modelName,
-      promptVersion: RESUME_GENERATION_PROMPT_VERSION
+      promptVersion: RESUME_GENERATION_PROMPT_VERSION,
+      resumeRulesText: input.resumeRulesText
     });
 
     const cached = await loadCachedGeneratedResumeResult({
@@ -101,7 +92,8 @@ export async function generateDeterministicResumeContent(input: {
     let tailoredRaw = await tailorResumeRawWithRetry({
       source: profileSkeleton,
       jobAnalysis,
-      gapAnalysis: initialGapAnalysis
+      gapAnalysis: initialGapAnalysis,
+      resumeRulesText: input.resumeRulesText
     }).catch(() => buildFallbackTailoredResume(profileSkeleton, input.jobTitle, input.company, jobAnalysis));
 
     let tailored: TailoredResume;
@@ -118,7 +110,8 @@ export async function generateDeterministicResumeContent(input: {
         jobAnalysis,
         gapAnalysis: initialGapAnalysis,
         previousOutput: typeof tailoredRaw === "string" ? tailoredRaw : JSON.stringify(tailoredRaw, null, 2),
-        issues: validation.issues
+        issues: validation.issues,
+        resumeRulesText: input.resumeRulesText
       }).catch(() => null);
 
       if (repairedRaw) {
@@ -166,7 +159,7 @@ export async function generateDeterministicResumeContent(input: {
     });
 
     const result = {
-      candidateName: profileSkeleton.name || input.candidateName || extractCandidateNameFromResumeText(sourceResumeText) || "Candidate",
+      candidateName: profileSkeleton.name || input.candidateName || "Candidate",
       resumeMarkdown,
       coverLetterMarkdown: "",
       validation: {

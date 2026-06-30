@@ -1,12 +1,15 @@
 import { UserRole } from "@prisma/client";
 import { NextRequest } from "next/server";
-import fs from "fs";
-import path from "path";
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/rbac";
 import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
+import { buildCandidateProfileFromText, buildResumeRulesText, CANDIDATE_PROFILE_VERSION } from "@/lib/resume/candidate-profile";
+import { aiExtractCandidateProfile } from "@/lib/resume/ai-profile-extractor";
+import { saveResumeFile, validateResumeFile } from "@/lib/storage";
+import { toPrismaJson } from "@/lib/json";
+import { extractResumeText } from "@/lib/resume-text";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,61 +60,28 @@ export async function POST(req: NextRequest) {
     let fileUrl: string | null = null;
     let extractedText = providedText;
 
-    // 🔍 Process file if provided
     if (file instanceof File) {
-      console.log("=== FILE UPLOAD DEBUG ===");
-      console.log("File name:", file.name);
-      console.log("File size:", file.size);
-      console.log("File type:", file.type);
-
-      if (file.size === 0) {
-        return jsonError("File is empty", 422);
+      const validationError = validateResumeFile(file.name, file.type, file.size);
+      if (validationError) {
+        return jsonError(validationError, 422);
       }
 
-      // ✅ Convert file → buffer
       const bytes = await file.arrayBuffer();
-      const buffer = Buffer.from(bytes);
 
-      console.log("Buffer length:", buffer.length);
+      const extracted = await extractResumeText({
+        fileName: file.name,
+        mimeType: file.type,
+        bytes
+      });
+      extractedText = extracted.text.trim();
 
-      if (buffer.length === 0) {
-        return jsonError("Buffer is empty", 422);
-      }
-
-      // 📄 Extract text
-      if (file.type === "application/pdf") {
-        try {
-          const pdfParseModule = await import("pdf-parse");
-          const legacyParser = (pdfParseModule as { default?: (input: Buffer) => Promise<{ text?: string }> }).default;
-          if (typeof legacyParser === "function") {
-            const pdfData = await legacyParser(buffer);
-            extractedText = pdfData.text || "";
-          }
-        } catch (pdfError) {
-          console.error("PDF parsing error:", pdfError);
-          return jsonError("Failed to parse PDF file", 422);
-        }
-      } else if (file.type === "text/plain") {
-        extractedText = buffer.toString("utf-8");
-      } else {
-        return jsonError("Only PDF and TXT files are supported", 422);
-      }
-
-      console.log("Extracted text length:", extractedText.length);
-
-      // 💾 Save file locally for reference
-      const uploadDir = path.join(process.cwd(), "public", "uploads", "resumes");
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-
-      const timestamp = Date.now();
-      const safeFileName = `${timestamp}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      const filePath = path.join(uploadDir, safeFileName);
-      fs.writeFileSync(filePath, buffer);
-
-      fileUrl = `/uploads/resumes/${safeFileName}`;
-      console.log("File saved to:", fileUrl);
+      const saved = await saveResumeFile({
+        userId: `manager-${managerId}`,
+        fileName: file.name,
+        mimeType: file.type,
+        bytes
+      });
+      fileUrl = saved.url;
     }
 
     // Use provided text if no file, otherwise use extracted text
@@ -132,62 +102,91 @@ export async function POST(req: NextRequest) {
     }
 
     // 🗄️ Save to database
-    const resume = await prisma.$transaction(async (tx) => {
-      const created = await tx.resume.create({
-        data: {
-          managerId: manager.id,
-          createdById: auth.user.id,
-          title,
-          originalText: finalText,
-          fileUrl
-        },
-        select: {
-          id: true,
-          managerId: true,
-          title: true,
-          fileUrl: true,
-          createdAt: true,
-          updatedAt: true
-        }
-      });
+    let candidateProfile: unknown = null;
+    let resumeRulesText: string | null = null;
+    let profileStatus = "converted";
+    try {
+      // AI extraction handles any PDF layout — falls back to heuristic parser if no API key or on error
+      const aiProfile = await aiExtractCandidateProfile({ text: finalText });
+      if (aiProfile) {
+        candidateProfile = aiProfile;
+        resumeRulesText = buildResumeRulesText(aiProfile);
+      } else {
+        const converted = buildCandidateProfileFromText({
+          text: finalText,
+          fileType: file instanceof File ? file.type || "uploaded-file" : "text/plain"
+        });
+        candidateProfile = converted.profile;
+        resumeRulesText = buildResumeRulesText(converted.profile);
+      }
+    } catch (conversionError) {
+      console.warn("resume profile conversion failed; saving raw resume for admin converter review", conversionError);
+      profileStatus = "conversion_failed";
+    }
 
-      await tx.managerProfile.upsert({
-        where: { id: manager.id },
-        update: {
-          templateResumeUrl: fileUrl ?? manager.managerProfile?.templateResumeUrl ?? null,
-          templateResumeText: finalText
-        },
-        create: {
-          id: manager.id,
-          email: `${manager.username}@example.com`,
-          fullName: manager.username,
-          templateResumeUrl: fileUrl,
-          templateResumeText: finalText
-        }
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: auth.user.id,
-          action: "resume.created",
-          details: {
-            resumeId: created.id,
-            managerId: manager.id,
-            title: created.title,
-            hasFile: !!fileUrl
-          }
-        }
-      });
-
-      return created;
+    const resume = await prisma.resume.create({
+      data: {
+        managerId: manager.id,
+        createdById: auth.user.id,
+        title,
+        originalText: finalText,
+        candidateProfile: candidateProfile ? toPrismaJson(candidateProfile) : undefined,
+        resumeRulesText: resumeRulesText ?? undefined,
+        profileStatus,
+        convertedAt: candidateProfile ? new Date() : undefined,
+        converterVersion: candidateProfile ? CANDIDATE_PROFILE_VERSION : undefined,
+        fileUrl
+      },
+      select: {
+        id: true,
+        managerId: true,
+        title: true,
+        fileUrl: true,
+        candidateProfile: true,
+        resumeRulesText: true,
+        profileStatus: true,
+        convertedAt: true,
+        createdAt: true,
+        updatedAt: true
+      }
     });
 
-    console.log("Resume saved to database with ID:", resume.id);
+    await prisma.managerProfile.upsert({
+      where: { id: manager.id },
+      update: {
+        templateResumeUrl: fileUrl ?? manager.managerProfile?.templateResumeUrl ?? null,
+        templateResumeText: finalText
+      },
+      create: {
+        id: manager.id,
+        email: `${manager.username}@example.com`,
+        fullName: manager.username,
+        templateResumeUrl: fileUrl,
+        templateResumeText: finalText
+      }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: auth.user.id,
+        action: "resume.created",
+        details: {
+          resumeId: resume.id,
+          managerId: manager.id,
+          title: resume.title,
+          hasFile: !!fileUrl
+        }
+      }
+    }).catch((err) => {
+      console.warn("audit log failed (non-fatal)", err);
+    });
 
     return jsonOk(
       {
         resume: {
           ...resume,
+          hasCandidateProfile: Boolean(resume.candidateProfile),
+          hasResumeRules: Boolean(resume.resumeRulesText),
           textLength: finalText.length
         }
       },

@@ -10,6 +10,8 @@ import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { extractResumeText } from "@/lib/resume-text";
 import { saveResumeFile, validateResumeFile } from "@/lib/storage";
+import { buildCandidateProfileFromText, buildResumeRulesText, CANDIDATE_PROFILE_VERSION } from "@/lib/resume/candidate-profile";
+import { toPrismaJson } from "@/lib/json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,6 +77,21 @@ export async function POST(req: NextRequest) {
       return jsonError("We could not extract text from this resume. Upload a clearer PDF/DOCX/TXT/image or paste text manually.", 422);
     }
 
+    let candidateProfile: unknown = null;
+    let resumeRulesText: string | null = null;
+    let profileStatus = "converted";
+    try {
+      const converted = buildCandidateProfileFromText({
+        text: extracted.text,
+        fileType: file.type || "uploaded-file"
+      });
+      candidateProfile = converted.profile;
+      resumeRulesText = buildResumeRulesText(converted.profile);
+    } catch (conversionError) {
+      console.warn("manager create resume profile conversion failed", conversionError);
+      profileStatus = "conversion_failed";
+    }
+
     const passwordHash = await hashPassword(parsed.data.password);
 
     const created = await prisma.$transaction(async (tx) => {
@@ -103,6 +120,11 @@ export async function POST(req: NextRequest) {
           createdById: auth.user.id,
           title: `${parsed.data.fullName.trim()} - Primary Resume`,
           originalText: extracted.text,
+          candidateProfile: candidateProfile ? toPrismaJson(candidateProfile) : undefined,
+          resumeRulesText: resumeRulesText ?? undefined,
+          profileStatus,
+          convertedAt: candidateProfile ? new Date() : undefined,
+          converterVersion: candidateProfile ? CANDIDATE_PROFILE_VERSION : undefined,
           fileUrl: saved.url
         }
       });

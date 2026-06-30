@@ -40,6 +40,8 @@ model User {
   managedResumes Resume[]   @relation("ManagerResumes")
   createdResumes Resume[]   @relation("CreatedResumes")
   generatedResumes GeneratedResume[] @relation("BidderGeneratedResumes")
+  timeEntries  TimeEntry[]
+  bidderClientAssignments BidderClientAssignment[] @relation("ManagerClientAssignments")
 
   @@map("users")
 }
@@ -57,6 +59,7 @@ model BidderProfile {
   updatedAt   DateTime       @updatedAt @map("updated_at")
   applications Application[]
   payments    Payment[]
+  clientAssignments BidderClientAssignment[]
 
   @@index([managerId])
   @@map("bidders")
@@ -83,6 +86,11 @@ model Resume {
   createdBy   User?    @relation("CreatedResumes", fields: [createdById], references: [id])
   title       String
   originalText String  @map("original_text")
+  candidateProfile Json? @map("candidate_profile")
+  resumeRulesText String? @map("resume_rules_text")
+  profileStatus String @default("legacy") @map("profile_status")
+  convertedAt DateTime? @map("converted_at")
+  converterVersion String? @map("converter_version")
   fileUrl     String?  @map("file_url")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -151,6 +159,7 @@ model Payment {
 
   @@index([bidderId, paymentDate])
   @@index([managerId, paymentDate])
+  @@index([bidderId])
   @@map("payments")
 }
 
@@ -163,6 +172,7 @@ model AuditLog {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId, createdAt])
+  @@index([action, createdAt])
   @@map("audit_logs")
 }
 
@@ -222,5 +232,35 @@ model BackgroundJob {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@index([userId, type, status, createdAt])
+  @@index([type, status, createdAt])
+  @@index([status, createdAt])
   @@map("background_jobs")
+}
+
+model BidderClientAssignment {
+  id         String        @id @default(auto()) @map("_id") @db.ObjectId
+  bidderId   String        @map("bidder_id") @db.ObjectId
+  bidder     BidderProfile @relation(fields: [bidderId], references: [id])
+  managerId  String        @map("manager_id") @db.ObjectId
+  manager    User          @relation("ManagerClientAssignments", fields: [managerId], references: [id])
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  @@unique([bidderId, managerId])
+  @@index([bidderId])
+  @@index([managerId])
+  @@map("bidder_client_assignments")
+}
+
+model TimeEntry {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String    @map("user_id") @db.ObjectId
+  user         User      @relation(fields: [userId], references: [id])
+  clockedInAt  DateTime  @map("clocked_in_at")
+  clockedOutAt DateTime? @map("clocked_out_at")
+  durationSecs Int?      @map("duration_secs")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, clockedInAt])
+  @@map("time_entries")
 }

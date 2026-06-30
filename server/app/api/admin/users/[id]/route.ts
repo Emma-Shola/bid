@@ -249,6 +249,15 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       return jsonError("Failed to update user", 500);
     }
 
+    // Sync BidderClientAssignment whenever a manager is assigned via this route
+    if (typeof assignmentManagerId === "string" && updated.role === UserRole.bidder) {
+      await prisma.bidderClientAssignment.upsert({
+        where: { bidderId_managerId: { bidderId: id, managerId: assignmentManagerId } },
+        create: { bidderId: id, managerId: assignmentManagerId },
+        update: {},
+      }).catch(() => null);
+    }
+
     // Revoke active sessions only when auth-critical account data changed.
     // Manager assignment updates should not force logout or slow down reassignment UX.
     if (roleChanged || approvalChanged || profileChanged) {

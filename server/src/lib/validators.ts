@@ -57,6 +57,7 @@ export const generateResumeSchema = z.object({
   jobTitle: z.string().min(2).max(500),
   company: z.string().min(2).max(255),
   jobDescription: z.string().min(10),
+  jobUrl: z.string().url().optional().or(z.literal("")),
   resumeText: z.string().max(20_000).optional(),
   resumeUrl: resumeUrlSchema,
   preferInline: z.boolean().optional()

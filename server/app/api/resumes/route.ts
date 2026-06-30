@@ -5,7 +5,6 @@ import { getAuthUser } from "@/lib/rbac";
 import { jsonError, jsonOk } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { resumeListQuerySchema } from "@/lib/validators";
-import { isRecoverableResumeSource } from "@/lib/resume/content-signals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,6 +76,10 @@ export async function GET(req: NextRequest) {
           createdAt: true,
           updatedAt: true,
           originalText: true,
+          candidateProfile: true,
+          resumeRulesText: true,
+          profileStatus: true,
+          convertedAt: true,
           manager: {
             select: {
               id: true,
@@ -127,7 +130,7 @@ export async function GET(req: NextRequest) {
             id: `legacy-template-${fallbackManagerId}`,
             managerId: fallbackManagerId,
             title: `${manager.managerProfile?.fullName || manager.username} - Manager Template`,
-            isUsableForGeneration: isRecoverableResumeSource(manager.managerProfile?.templateResumeText ?? ""),
+            isUsableForGeneration: false,
             fileUrl: manager.managerProfile?.templateResumeUrl ?? null,
             openUrl: manager.managerProfile?.templateResumeUrl ? `/api/resumes/legacy-template-${fallbackManagerId}/file` : null,
             createdAt: new Date(),
@@ -161,7 +164,11 @@ export async function GET(req: NextRequest) {
         id: item.id,
         managerId: item.managerId,
         title: item.title,
-        isUsableForGeneration: isRecoverableResumeSource(item.originalText),
+        isUsableForGeneration: item.profileStatus === "approved",
+        profileStatus: item.profileStatus,
+        hasCandidateProfile: Boolean(item.candidateProfile),
+        hasResumeRules: Boolean(item.resumeRulesText),
+        convertedAt: item.convertedAt,
         fileUrl: item.fileUrl,
         openUrl: item.fileUrl ? `/api/resumes/${item.id}/file` : null,
         createdAt: item.createdAt,

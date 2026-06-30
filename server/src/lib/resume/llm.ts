@@ -25,6 +25,7 @@ function buildPrompt(input: {
   source: ParsedResume;
   jobAnalysis: JobAnalysis;
   gapAnalysis: ResumeGapAnalysis;
+  resumeRulesText?: string;
 }) {
   return [
     "You are an elite ATS resume transformation engine.",
@@ -40,11 +41,22 @@ function buildPrompt(input: {
     "Every important JD technology must appear naturally in tailoredSkills, the summary, the most recent role bullets, and the most recent role's project-shaped achievement cluster.",
     "The most recent role must contain a project aligned with the JD technologies, JD responsibilities, and JD business domain without copying the JD verbatim.",
     "The final resume should read as if it was originally written for the target job.",
-    "Write the summary as one dense paragraph or 3 to 4 compact sentences, roughly 110 to 170 words, with no bullets and no markdown.",
-    "Start with the target role and seniority, then weave in the JD domain, JD technologies, system ownership, scale, delivery responsibility, and business or technical outcomes.",
-    "Use JD keywords naturally and aggressively while keeping the language human and recruiter-friendly.",
-    "Avoid generic language that could fit any engineer, such as weak filler about being detail-oriented, passionate, or a strong team player unless it is grounded in stronger technical detail.",
-    "Prefer concrete nouns, systems, scale, and outcomes over vague adjectives.",
+    "SUMMARY WRITING RULES — READ CAREFULLY:",
+    "Write one paragraph of 3 to 4 sentences, 110 to 160 words. No bullets. No markdown.",
+    "The summary must read like a recruiter who just interviewed this candidate is introducing them: confident, career-specific, human.",
+    "SENTENCE 1 — Career story opener. Answer: what has this person spent their career doing? Lead with years of experience and the nature of the work. Example structure: 'Software engineer with X years designing and operating [type of systems] for [type of companies]...' — never open with a job title, seniority label, or technology list.",
+    "SENTENCE 2 — What was built or delivered. Describe the systems, products, or operational improvements this person has owned. Bring in the JD domain naturally here — not as a keyword, as context for what they built.",
+    "SENTENCE 3 or 4 — Technical depth in context. Describe technical strengths by explaining how they were applied: '...using AWS and infrastructure automation to improve deployment reliability' not 'AWS, Kubernetes, Terraform'. Technologies should appear as part of a sentence describing work, never as a comma-separated list.",
+    "HARD RULES FOR THE SUMMARY:",
+    "- NO PRONOUNS ANYWHERE IN THE SUMMARY. Never write 'he', 'she', 'they', 'his', 'her', 'their', 'He has', 'She has', 'They have'. Resumes are written in implied first-person with no subject. Write 'Has led teams...' not 'He has led teams...'. Write 'Brings deep experience...' not 'He brings...'. This is the single most important rule — a pronoun in a resume summary immediately signals AI generation.",
+    "- FORBIDDEN openers — never begin with: the exact target job title ('Staff Software Engineer...', 'Senior Backend Engineer...', 'Principal Engineer...'), the word 'Specializing', or a technology list.",
+    "- ALLOWED openers — begin with years of experience and what the person has built: 'Software engineer with 10 years designing...', 'Backend engineer who has spent a decade building...', 'Engineering lead with 12 years delivering...'",
+    "- NEVER list technologies as a comma-separated sequence anywhere in the summary. Technologies must appear embedded in sentences that describe work: '...building payment systems using TypeScript and PostgreSQL' not 'TypeScript, Python, Java, Go, SQL, PostgreSQL'.",
+    "- DO NOT mirror the job description. A recruiter reading the summary and the JD side-by-side should not see obvious phrase overlap.",
+    "- DO NOT use hollow filler: 'passionate about', 'detail-oriented', 'strong team player', 'proven track record', 'results-driven'.",
+    "- ATS keywords must be invisible — woven into real sentences about real work.",
+    "- The JD refines the framing; it does not replace the candidate's career identity.",
+    "- Prefer concrete nouns: systems built, scale numbers, products shipped, improvements made.",
     "Generate technical skills directly from the JD. Include all important JD technologies, frameworks, programming languages, databases, cloud platforms, DevOps tools, methodologies, responsibilities, and ATS keywords.",
     "Organize tailoredSkills as compact category strings, for example: Languages: Python, TypeScript, SQL.",
     "For the most recent role, create a project-shaped achievement cluster that aligns strongly with the JD responsibilities, using JD technologies, realistic engineering scope, and measurable business outcomes.",
@@ -78,6 +90,9 @@ function buildPrompt(input: {
     "TARGET BULLET COUNTS:",
     JSON.stringify(input.source.experience.map((_, index) => index === 0 ? "5-7 JD-aligned bullets with one project-shaped cluster" : "3-5 JD-aligned bullets")),
     "",
+    "ADMIN-APPROVED RESUME RULES TXT:",
+    input.resumeRulesText?.trim() || "No additional admin rules were provided.",
+    "",
     "GAP ANALYSIS JSON:",
     JSON.stringify(input.gapAnalysis),
     "",
@@ -95,6 +110,7 @@ function buildRepairPrompt(input: {
   gapAnalysis: ResumeGapAnalysis;
   previousOutput: string;
   issues: string[];
+  resumeRulesText?: string;
 }) {
   return [
     "Your previous JSON was invalid for production use.",
@@ -103,12 +119,16 @@ function buildRepairPrompt(input: {
     "Do not reuse uploaded summary, uploaded skills, uploaded project descriptions, or uploaded bullets.",
     "Use the supplied gap analysis and job analysis to regenerate JD-first summary, skills, project-shaped content, and experience bullets.",
     "Every important JD technology should appear in tailoredSkills and naturally in the most recent role.",
-    "Rewrite the summary so it is dense, technical, specific, and clearly built for the target job description.",
-    "Keep the summary to one compact paragraph or 3 to 4 sentences and make sure it reflects the target role, domain, JD technologies, scale, and outcomes.",
+    "Rewrite the summary as a career story, not a JD keyword list. It must read like a recruiter describing this candidate after an interview.",
+    "Keep it to one paragraph of 3 to 4 sentences. Open with years of experience and what this person has built over their career. Introduce technologies in the context of work done, never as a comma-separated list.",
+    "ABSOLUTELY FORBIDDEN in the summary: pronouns of any kind ('he', 'she', 'they', 'his', 'her', 'their' — resumes use implied first-person with no subject), opening with a job title or seniority label, technology lists ('TypeScript, Python, Java, Go'), JD language copied verbatim, filler phrases.",
     "Do not add markdown fences, explanations, or commentary.",
     "",
     "VALIDATION ISSUES:",
     JSON.stringify(input.issues),
+    "",
+    "ADMIN-APPROVED RESUME RULES TXT:",
+    input.resumeRulesText?.trim() || "No additional admin rules were provided.",
     "",
     "PREVIOUS OUTPUT:",
     input.previousOutput,
@@ -137,6 +157,7 @@ async function runTailoringAttempt(input: {
   source: ParsedResume;
   jobAnalysis: JobAnalysis;
   gapAnalysis: ResumeGapAnalysis;
+  resumeRulesText?: string;
 }) {
   const openai = getClient();
   if (!openai) {
@@ -147,8 +168,13 @@ async function runTailoringAttempt(input: {
     model: getResumeGenerationModel(),
     temperature: 0,
     instructions:
-    "You are a professional ATS resume transformation engine. Return only strict JSON that matches the schema exactly. Use the job description and gap analysis to maximize truthful ATS alignment, keep skills ordered by relevance, and make experience bullets achievement-driven and recruiter-grade.",
-    input: buildPrompt({ source: input.source, jobAnalysis: input.jobAnalysis, gapAnalysis: input.gapAnalysis }),
+    "You are a professional resume writer who produces senior-level resumes that sound like they were written by a human, not generated by AI. Return only strict JSON that matches the schema exactly. The summary must tell a career story — experience first, technologies woven naturally into context, never listed as keywords. Experience bullets must read as achievements with ownership and outcomes. The result must pass a recruiter's sniff test: it should not look AI-generated.",
+    input: buildPrompt({
+      source: input.source,
+      jobAnalysis: input.jobAnalysis,
+      gapAnalysis: input.gapAnalysis,
+      resumeRulesText: input.resumeRulesText
+    }),
     text: {
       format: zodTextFormat(TailoredResumeSchema, "tailored_resume")
     }
@@ -168,6 +194,7 @@ async function runRepairAttempt(input: {
   gapAnalysis: ResumeGapAnalysis;
   previousOutput: string;
   issues: string[];
+  resumeRulesText?: string;
 }) {
   const openai = getClient();
   if (!openai) {
@@ -178,13 +205,14 @@ async function runRepairAttempt(input: {
     model: getResumeGenerationModel(),
     temperature: 0,
     instructions:
-    "You are a professional ATS resume transformation engine. Return only strict JSON that matches the schema exactly. Use the gap analysis to maximize truthful ATS alignment and keep experience bullets achievement-driven and recruiter-grade.",
+    "You are a professional resume writer producing senior-level resumes that sound human, not AI-generated. Return only strict JSON. Fix the validation issues in the previous output while keeping the summary as a natural career story and bullets as achievement statements.",
     input: buildRepairPrompt({
       source: input.source,
       jobAnalysis: input.jobAnalysis,
       gapAnalysis: input.gapAnalysis,
       previousOutput: input.previousOutput,
-      issues: input.issues
+      issues: input.issues,
+      resumeRulesText: input.resumeRulesText
     }),
     text: {
       format: zodTextFormat(TailoredResumeSchema, "tailored_resume")
@@ -203,6 +231,7 @@ export async function tailorResumeRawWithRetry(input: {
   source: ParsedResume;
   jobAnalysis: JobAnalysis;
   gapAnalysis: ResumeGapAnalysis;
+  resumeRulesText?: string;
 }) {
   try {
     return await runTailoringAttempt(input);
@@ -213,7 +242,8 @@ export async function tailorResumeRawWithRetry(input: {
       jobAnalysis: input.jobAnalysis,
       gapAnalysis: input.gapAnalysis,
       previousOutput: firstOutput,
-      issues: [firstOutput]
+      issues: [firstOutput],
+      resumeRulesText: input.resumeRulesText
     }).catch(() => null);
 
     if (secondAttempt) {
@@ -230,6 +260,7 @@ export async function repairTailoredResumeRaw(input: {
   gapAnalysis: ResumeGapAnalysis;
   previousOutput: string;
   issues: string[];
+  resumeRulesText?: string;
 }) {
   return runRepairAttempt(input);
 }

@@ -11,3 +11,5 @@ public/uploads
 server/public/uploads
 .history
 *.log
+*.tsbuildinfo
+.resume-debug

@@ -2,22 +2,37 @@ import React from "react";
 import { Text, View } from "@react-pdf/renderer";
 import type { ResumeExportModel } from "../exporter";
 import { preventOrphanAmpersand } from "../shared";
-import { resumePdfStyles as styles } from "./styles";
+import { resumePdfStyles as s } from "./styles";
 
-type HeaderProps = {
-  model: ResumeExportModel;
-};
+export function Header({ model }: { model: ResumeExportModel }) {
+  const extraLinks = model.linksLine?.trim() || "";
 
-export function Header({ model }: HeaderProps) {
   return (
-    <View style={styles.header} wrap={false}>
-      <Text style={styles.headerName}>{model.name || "Resume"}</Text>
-      {model.title ? <Text style={styles.headerTitle}>{preventOrphanAmpersand(model.title)}</Text> : null}
-      {model.contactLine ? <Text style={styles.headerContact}>{model.contactLine}</Text> : null}
-      {model.linksLine ? <Text style={styles.headerLinks}>{model.linksLine}</Text> : null}
+    <View style={s.header} wrap={false}>
+      {/* Row: Name (left) | Title (right) */}
+      <View style={s.headerNameRow}>
+        <View style={s.headerNameCol}>
+          <Text style={s.headerName}>{model.name || "Resume"}</Text>
+        </View>
+        {model.title ? (
+          <View style={s.headerTitleCol}>
+            <Text style={s.headerTitle}>{preventOrphanAmpersand(model.title)}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Full-width rule */}
+      <View style={s.headerRule} />
+
+      {/* Contact: email · phone · linkedin · location */}
+      {model.contactLine ? (
+        <Text style={s.headerContact}>{model.contactLine}</Text>
+      ) : null}
+
+      {/* Extra links (github / website) */}
+      {extraLinks ? (
+        <Text style={s.headerLinks}>{extraLinks}</Text>
+      ) : null}
     </View>
   );
 }
-
-
-

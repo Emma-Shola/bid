@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { X, Plus, Users2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { PageHeader } from "@/components/PageHeader";
@@ -11,7 +12,148 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Role, User } from "@/lib/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { BidderClient, Role, User } from "@/lib/types";
+
+function ClientsDialog({
+  bidder,
+  managers,
+  onClose,
+  onAssigned,
+}: {
+  bidder: User | null;
+  managers: User[];
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const qc = useQueryClient();
+  const [addManagerId, setAddManagerId] = useState("");
+
+  const { data: clients = [], isLoading } = useQuery({
+    queryKey: ["admin-bidder-clients", bidder?.id],
+    queryFn: () => api.adminGetBidderClients(bidder!.id),
+    enabled: !!bidder,
+    refetchOnMount: "always",
+  });
+
+  const assign = useMutation({
+    mutationFn: (managerId: string) => api.adminAssignClient(bidder!.id, managerId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-bidder-clients", bidder?.id] });
+      setAddManagerId("");
+      onAssigned();
+      toast.success("Client assigned");
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to assign client"),
+  });
+
+  const remove = useMutation({
+    mutationFn: (managerId: string) => api.adminRemoveClient(bidder!.id, managerId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-bidder-clients", bidder?.id] });
+      onAssigned();
+      toast.success("Client removed");
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to remove client"),
+  });
+
+  const assignedIds = new Set(clients.map((c) => c.managerId));
+  const available = managers.filter((m) => !assignedIds.has(m.id));
+
+  return (
+    <Dialog open={!!bidder} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Manage Clients — {bidder?.name}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2">
+          {/* Current assignments */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              Assigned Clients
+            </p>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : clients.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No clients assigned yet.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {clients.map((client: BidderClient) => (
+                  <li
+                    key={client.managerId}
+                    className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{client.managerName}</span>
+                      {client.isActive && (
+                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-2xs font-medium text-green-700">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(client.managerId)}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Add new client */}
+          {available.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Add Client
+              </p>
+              <div className="flex gap-2">
+                <Select value={addManagerId} onValueChange={setAddManagerId}>
+                  <SelectTrigger className="flex-1 h-8 text-xs">
+                    <SelectValue placeholder="Select a manager…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {available.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!addManagerId || assign.isPending}
+                  onClick={() => addManagerId && assign.mutate(addManagerId)}
+                  className="gap-1"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Assign
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {available.length === 0 && clients.length > 0 && (
+            <p className="text-xs text-muted-foreground">All managers are already assigned to this bidder.</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function Users() {
   const qc = useQueryClient();
@@ -39,6 +181,7 @@ export default function Users() {
   });
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [uploadingTemplateManagerId, setUploadingTemplateManagerId] = useState<string | null>(null);
+  const [clientsDialogBidder, setClientsDialogBidder] = useState<User | null>(null);
 
   const managers = useMemo(
     () => data.filter((item) => item.role === "manager"),
@@ -299,30 +442,16 @@ export default function Users() {
           </Select>
 
           {row.role === "bidder" && (
-            <Select
-              value={row.managerId ?? "__none"}
-              onValueChange={(value) => {
-                const nextValue = value === "__none" ? null : value;
-                if (nextValue === row.managerId) return;
-                update.mutate({
-                  id: row.id,
-                  managerId: nextValue
-                });
-              }}
-              disabled={savingUserId === row.id && update.isPending}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setClientsDialogBidder(row)}
             >
-              <SelectTrigger className="h-8 w-[180px] text-xs">
-                <SelectValue placeholder="Assign manager" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none">Unassigned</SelectItem>
-                {managers.map((manager) => (
-                  <SelectItem key={manager.id} value={manager.id}>
-                    {manager.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <Users2 className="h-3.5 w-3.5" />
+              Clients
+            </Button>
           )}
 
           {row.role === "manager" && (
@@ -371,6 +500,15 @@ export default function Users() {
   return (
     <div className="space-y-6">
       <PageHeader title="Users" description="Create managers, assign bidders, and control account permissions." />
+
+      <ClientsDialog
+        bidder={clientsDialogBidder}
+        managers={managers}
+        onClose={() => setClientsDialogBidder(null)}
+        onAssigned={() => {
+          qc.invalidateQueries({ queryKey: ["users"] });
+        }}
+      />
 
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="mb-4">

@@ -17,7 +17,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { format } from "date-fns";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -324,12 +324,15 @@ function getQueueJobView(job: BackgroundJob, store: BidderQueueStore): QueueView
 export default function ResumeQueueStudio() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const setupState = (location.state ?? {}) as { resumeId?: string; workspaceId?: string };
   const qc = useQueryClient();
   const [jobTitle, setJobTitle] = useState("");
   const [company, setCompany] = useState("");
+  const [jobUrl, setJobUrl] = useState("");
   const [jobDescription, setJobDescription] = useState("");
-  const [selectedResumeId, setSelectedResumeId] = useState("");
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [selectedResumeId, setSelectedResumeId] = useState(setupState.resumeId ?? "");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(setupState.workspaceId ?? null);
   const [statusFilter, setStatusFilter] = useState<QueueFilter>("all");
   const [sortMode, setSortMode] = useState<QueueSortMode>("newest");
   const [queueSearch, setQueueSearch] = useState("");
@@ -391,8 +394,10 @@ export default function ResumeQueueStudio() {
     if (!user?.id) return;
     const store = bootstrapBidderQueueStore(user.id);
     setQueueStore(store);
-    setSelectedWorkspaceId(store.activeWorkspaceId ?? store.workspaces[0]?.id ?? null);
-  }, [user?.id]);
+    // Prefer the workspace passed from the setup page; fall back to the stored active one
+    const preselectedWorkspaceId = setupState.workspaceId ?? store.activeWorkspaceId ?? store.workspaces[0]?.id ?? null;
+    setSelectedWorkspaceId(preselectedWorkspaceId);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!user?.id) return;
@@ -523,10 +528,13 @@ export default function ResumeQueueStudio() {
       if (selectedResumeId) setSelectedResumeId("");
       return;
     }
+    // Only fall back to first template if none selected (setup page pre-selects one)
     if (!selectedResumeId || !resumeTemplates.some((resume) => resume.id === selectedResumeId)) {
-      setSelectedResumeId(resumeTemplates[0].id);
+      setSelectedResumeId(setupState.resumeId && resumeTemplates.some((r) => r.id === setupState.resumeId)
+        ? setupState.resumeId
+        : resumeTemplates[0].id);
     }
-  }, [resumeTemplates, selectedResumeId]);
+  }, [resumeTemplates, selectedResumeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const queueJobs = useMemo(() => {
     const combined = [...pendingGenerationRows, ...jobs];
@@ -639,6 +647,7 @@ export default function ResumeQueueStudio() {
         resumeId,
         jobTitle: jobTitleValue,
         company: companyValue,
+        jobUrl: jobUrl.trim() || undefined,
         jobDescription: jobDescriptionValue,
         preferInline: false,
       });
@@ -780,8 +789,12 @@ export default function ResumeQueueStudio() {
             : "Resume generation queued",
       );
 
-      if (result.generatedResumeId && (result.status === "completed" || result.status === "qa_required")) {
-        await autoSaveGeneratedResume(result.jobId, result.generatedResumeId, result.status);
+      if (result.status === "completed" || result.status === "qa_required") {
+        await autoSaveGeneratedResume(result.jobId, result.status, {
+          structured: result.structured,
+          jobTitle: jobTitle,
+          company: company,
+        });
       }
     },
     onError: (error, _variables, context) => {
@@ -809,14 +822,18 @@ export default function ResumeQueueStudio() {
     },
   });
 
-  async function autoSaveGeneratedResume(targetJobId: string | undefined, generatedId: string, statusLabel: string) {
-    const log = (message: string) => console.log(`[resume-download] autoSave job=${targetJobId ?? "?"} generatedId=${generatedId} ${message}`);
+  async function autoSaveGeneratedResume(
+    targetJobId: string | undefined,
+    statusLabel: string,
+    content: { structured?: unknown; jobTitle?: string; company?: string } = {},
+  ) {
+    const log = (message: string) => console.log(`[resume-download] autoSave job=${targetJobId ?? "?"} ${message}`);
 
     if (!user?.id) {
       log("aborted: no authenticated user");
       return;
     }
-    const dedupeKey = targetJobId ?? generatedId;
+    const dedupeKey = targetJobId ?? `no-job-${Date.now()}`;
     const state = autoSaveStateRef.current.get(dedupeKey);
     if (state === "saving" || state === "saved" || state === "downloaded") {
       log(`skipped: dedupe state is already "${state}"`);
@@ -831,8 +848,19 @@ export default function ResumeQueueStudio() {
     });
 
     try {
-      log("fetching export blob from server");
-      const { blob, fileName } = await api.downloadGeneratedResumeExport(generatedId, "pdf");
+      if (!content.structured || typeof content.structured !== "object" ||
+          !("source" in (content.structured as object)) || !("tailored" in (content.structured as object))) {
+        throw new Error("Resume content not available — please regenerate this resume.");
+      }
+
+      log("requesting PDF from stateless export endpoint");
+      const structured = content.structured as { source: Record<string, unknown>; tailored: Record<string, unknown> };
+      const { blob, fileName } = await api.exportResumeToBlob({
+        structured,
+        jobTitle: content.jobTitle ?? jobTitle,
+        company: content.company ?? company,
+        format: "pdf",
+      });
       log(`export fetched ok, size=${blob.size} bytes fileName="${fileName}"`);
       const fallbackJob = queueJobs.find((job) => job.id === targetJobId);
       const fallbackName = sanitizeResumeFileName(
@@ -915,10 +943,29 @@ export default function ResumeQueueStudio() {
         };
         error?: string;
       };
+      // resume content pushed here only — never stored in the DB
+      content?: {
+        resumeMarkdown?: string;
+        coverLetterMarkdown?: string;
+        structured?: GeneratedResumeStructured;
+        score?: {
+          overall: number;
+          keywordCoverage: number;
+          skillCoverage: number;
+          quantifiedAchievementScore: number;
+          bulletQualityScore: number;
+          matchedKeywords: string[];
+          missingKeywords: string[];
+        };
+        preview?: string;
+      };
     }>
   >("background-job.updated", (event) => {
     if (!isLiveResumeQueueEvent(event) || !event.data.job.id) return;
     qc.invalidateQueries({ queryKey: ["bidder-jobs", user?.id] });
+
+    // Content is delivered via event.data.content (never stored server-side)
+    const deliveredContent = event.data.content;
 
     setPendingGenerationRows((current) =>
       current.map((job) => {
@@ -927,23 +974,15 @@ export default function ResumeQueueStudio() {
         const nextResult = {
           ...(job.result ?? {}),
         } as Record<string, unknown>;
-        if (typeof event.data.job.result?.preview === "string") {
-          nextResult.preview = normalizeGeneratedResumePreview(event.data.job.result.preview, "");
+        const src = deliveredContent ?? event.data.job.result;
+        if (typeof src?.preview === "string") {
+          nextResult.preview = normalizeGeneratedResumePreview(src.preview, "");
         }
-        if (typeof event.data.job.result?.markdown === "string") {
-          nextResult.markdown = event.data.job.result.markdown;
+        if (src?.structured) {
+          nextResult.structured = src.structured;
         }
-        if (typeof event.data.job.result?.content === "string") {
-          nextResult.content = event.data.job.result.content;
-        }
-        if (event.data.job.result?.structured) {
-          nextResult.structured = event.data.job.result.structured;
-        }
-        if (event.data.job.result?.score) {
-          nextResult.score = event.data.job.result.score;
-        }
-        if (event.data.job.result?.meta?.generatedResumeId) {
-          nextResult.meta = { generatedResumeId: event.data.job.result.meta.generatedResumeId };
+        if (src?.score) {
+          nextResult.score = src.score;
         }
 
         if (event.data.job.status === "running" || event.data.job.status === "processing" || event.data.job.status === "retrying") {
@@ -1001,18 +1040,14 @@ export default function ResumeQueueStudio() {
         );
       }
       if (event.data.job.status === "completed" || event.data.job.status === "qa_required") {
-        setGeneratedResumeId(event.data.job.result?.meta?.generatedResumeId ?? generatedResumeId);
-        setStructured(event.data.job.result?.structured ?? structured);
-        setScore(event.data.job.result?.score ?? score);
+        const wsContent = deliveredContent ?? event.data.job.result;
+        setStructured(wsContent?.structured ?? structured);
+        setScore(wsContent?.score ?? score);
         const preview = normalizeGeneratedResumePreview(
-          typeof event.data.job.result?.preview === "string"
-            ? event.data.job.result.preview
-            : JSON.stringify(event.data.job.result ?? {}),
+          typeof wsContent?.preview === "string" ? wsContent.preview : "",
           "",
         );
-        if (preview) {
-          setOutput(preview);
-        }
+        if (preview) setOutput(preview);
 
         const nextGenerationState: CurrentGenerationState = {
           jobId: event.data.job.id,
@@ -1027,10 +1062,11 @@ export default function ResumeQueueStudio() {
         };
         setCurrentGeneration(nextGenerationState);
 
-        const resolvedGeneratedResumeId = event.data.job.result?.meta?.generatedResumeId ?? generatedResumeId;
-        if (resolvedGeneratedResumeId) {
-          void autoSaveGeneratedResume(event.data.job.id, resolvedGeneratedResumeId, event.data.job.status);
-        }
+        void autoSaveGeneratedResume(event.data.job.id, event.data.job.status, {
+          structured: wsContent?.structured,
+          jobTitle,
+          company,
+        });
       }
       if (event.data.job.status === "failed" || event.data.job.status === "dead_letter") {
         setOutput(event.data.job.error ?? "Resume generation failed.");
@@ -1116,23 +1152,23 @@ export default function ResumeQueueStudio() {
   }
 
   async function manualDownload(job: QueueViewJob, format: "pdf" | "docx" = "pdf") {
-    const generatedResumeId = getGeneratedResumeId(job);
-    console.log(`[resume-download] manualDownload click job=${job.id} format=${format} generatedResumeId=${generatedResumeId || "(missing)"}`);
-    if (!generatedResumeId) {
-      console.warn(`[resume-download] manualDownload aborted: job=${job.id} has no generatedResumeId in job.result.meta`);
-      toast.error("This resume is not ready to download yet.");
+    const structured = getJobStructured(job);
+    if (!structured) {
+      toast.error("This resume was saved to your PC when generated. To get it again, regenerate using the same job details.");
       return;
     }
 
     try {
-      console.log(`[resume-download] manualDownload fetching export job=${job.id} generatedResumeId=${generatedResumeId}`);
-      const { blob, fileName } = await api.downloadGeneratedResumeExport(generatedResumeId, format);
-      console.log(`[resume-download] manualDownload export fetched job=${job.id} size=${blob.size} bytes fileName="${fileName}"`);
+      const { blob, fileName } = await api.exportResumeToBlob({
+        structured,
+        jobTitle: getJobTitle(job),
+        company: getJobCompany(job),
+        format,
+      });
       downloadBlob(blob, sanitizeResumeFileName(fileName));
       toast.success(`${format.toUpperCase()} download started`);
     } catch (error) {
-      console.error(`[resume-download] manualDownload failed job=${job.id} generatedResumeId=${generatedResumeId}`, error);
-      toast.error((error as Error).message || "Failed to download the resume");
+      toast.error((error as Error).message || "Failed to export the resume");
     }
   }
 
@@ -1469,6 +1505,9 @@ export default function ResumeQueueStudio() {
         description="Create today's folder, choose a download destination, and let resume jobs flow through the queue without blocking the screen."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/bidder/resume")}>
+              ← Setup
+            </Button>
             <Button
               variant="outline"
               onClick={handleChooseFolder}
@@ -1698,6 +1737,16 @@ export default function ResumeQueueStudio() {
                   <Label htmlFor="company">Company</Label>
                   <Input id="company" value={company} onChange={(event) => setCompany(event.target.value)} />
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="jobUrl">Job URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Input
+                  id="jobUrl"
+                  value={jobUrl}
+                  onChange={(event) => setJobUrl(event.target.value)}
+                  placeholder="https://..."
+                />
               </div>
 
               <div className="space-y-1.5">

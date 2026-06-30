@@ -395,6 +395,10 @@ function mapResumeTemplate(template: {
   managerId: string;
   title: string;
   isUsableForGeneration?: boolean;
+  profileStatus?: string;
+  hasCandidateProfile?: boolean;
+  hasResumeRules?: boolean;
+  convertedAt?: string | Date | null;
   fileUrl?: string | null;
   openUrl?: string | null;
   textLength: number;
@@ -415,6 +419,10 @@ function mapResumeTemplate(template: {
     managerName: template.manager?.managerProfile?.fullName ?? template.manager?.username ?? null,
     title: template.title,
     isUsableForGeneration: template.isUsableForGeneration,
+    profileStatus: template.profileStatus,
+    hasCandidateProfile: template.hasCandidateProfile,
+    hasResumeRules: template.hasResumeRules,
+    convertedAt: template.convertedAt ? new Date(template.convertedAt).toISOString() : null,
     fileUrl,
     openUrl,
     textLength: template.textLength,
@@ -556,6 +564,24 @@ export const api = {
       },
     );
 
+    return mapApplication(data);
+  },
+
+  async createApplicationForBidder(
+    bidderId: string,
+    input: {
+      jobTitle: string;
+      company: string;
+      jobUrl?: string;
+      jobDescription: string;
+      notes?: string;
+      status?: string;
+    },
+  ): Promise<Application> {
+    const data = await request<Parameters<typeof mapApplication>[0]>(
+      "/api/applications",
+      { method: "POST", body: JSON.stringify({ ...input, bidderId }) },
+    );
     return mapApplication(data);
   },
 
@@ -787,6 +813,10 @@ export const api = {
         managerId: string;
         title: string;
         fileUrl?: string | null;
+        profileStatus?: string;
+        hasCandidateProfile?: boolean;
+        hasResumeRules?: boolean;
+        convertedAt?: string | Date | null;
         textLength: number;
         createdAt: string | Date;
         updatedAt?: string | Date;
@@ -814,6 +844,10 @@ export const api = {
         title: string;
         fileUrl?: string | null;
         openUrl?: string | null;
+        profileStatus?: string;
+        hasCandidateProfile?: boolean;
+        hasResumeRules?: boolean;
+        convertedAt?: string | Date | null;
         textLength: number;
         createdAt: string | Date;
         updatedAt?: string | Date;
@@ -832,7 +866,7 @@ export const api = {
     await request(`/api/admin/resumes/${resumeId}`, { method: "DELETE" });
   },
 
-    async deleteLatestManagerResume(managerId: string): Promise<void> {
+  async deleteLatestManagerResume(managerId: string): Promise<void> {
       const resumes = await api.listResumes({ managerId });
       const realResumes = resumes
         .filter((resume) => !resume.id.startsWith("legacy-template-"))
@@ -844,6 +878,86 @@ export const api = {
 
       await request(`/api/admin/resumes/${realResumes[0].id}`, { method: "DELETE" });
     },
+
+  async getResumeProfile(resumeId: string): Promise<{
+    resume: ResumeTemplate & {
+      originalText: string;
+      candidateProfile?: unknown;
+      resumeRulesText?: string | null;
+      manager?: {
+        username: string;
+        managerProfile?: { fullName?: string | null } | null;
+      } | null;
+    };
+  }> {
+    const data = await request<{
+      resume: {
+        id: string;
+        managerId: string;
+        title: string;
+        originalText: string;
+        fileUrl?: string | null;
+        openUrl?: string | null;
+        candidateProfile?: unknown;
+        resumeRulesText?: string | null;
+        profileStatus?: string;
+        convertedAt?: string | Date | null;
+        textLength: number;
+        createdAt: string | Date;
+        updatedAt?: string | Date;
+        manager?: {
+          username: string;
+          managerProfile?: { fullName?: string | null } | null;
+        } | null;
+      };
+    }>(`/api/admin/resumes/${resumeId}/profile`, { method: "GET" });
+
+    return {
+      resume: {
+        ...mapResumeTemplate({
+          id: data.resume.id,
+          managerId: data.resume.managerId,
+          title: data.resume.title,
+          fileUrl: data.resume.fileUrl,
+          openUrl: data.resume.openUrl,
+          profileStatus: data.resume.profileStatus,
+          hasCandidateProfile: Boolean(data.resume.candidateProfile),
+          hasResumeRules: Boolean(data.resume.resumeRulesText),
+          convertedAt: data.resume.convertedAt,
+          textLength: data.resume.textLength,
+          createdAt: data.resume.createdAt,
+          updatedAt: data.resume.updatedAt,
+          manager: null,
+        }),
+        originalText: data.resume.originalText,
+        candidateProfile: data.resume.candidateProfile,
+        resumeRulesText: data.resume.resumeRulesText,
+        manager: data.resume.manager,
+      },
+    };
+  },
+
+  async convertResumeProfile(resumeId: string): Promise<{
+    candidateProfile: unknown;
+    resumeRulesText: string;
+    parsedPreview?: unknown;
+  }> {
+    return request(`/api/admin/resumes/${resumeId}/profile`, { method: "POST" });
+  },
+
+  async saveResumeProfile(input: {
+    resumeId: string;
+    candidateProfile: unknown;
+    resumeRulesText: string;
+  }): Promise<void> {
+    await request(`/api/admin/resumes/${input.resumeId}/profile`, {
+      method: "PUT",
+      body: JSON.stringify({
+        candidateProfile: input.candidateProfile,
+        resumeRulesText: input.resumeRulesText,
+      }),
+    });
+  },
 
   async listBidders(): Promise<User[]> {
     const data = await request<{ items: Array<Parameters<typeof mapUser>[0]> }>(
@@ -927,6 +1041,28 @@ export const api = {
     return data.retriedCount;
   },
 
+  async adminListResumeJobs(params: {
+    userId?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  } = {}): Promise<Array<{ id: string; userId: string; status: string; createdAt: string; payload: Record<string, unknown> }>> {
+    const qs = new URLSearchParams({ type: "resume.generate", limit: String(params.limit ?? 500), page: "1" });
+    if (params.userId) qs.set("userId", params.userId);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const data = await request<{
+      items: Array<{ id: string; userId: string; status: string; createdAt: string; payload?: Record<string, unknown> }>;
+    }>(buildUrl(`/api/admin/jobs?${qs.toString()}`), { method: "GET" });
+    return data.items.map((item) => ({
+      id: item.id,
+      userId: item.userId,
+      status: item.status,
+      createdAt: new Date(item.createdAt).toISOString(),
+      payload: item.payload ?? {},
+    }));
+  },
+
   async listNotifications(): Promise<NotificationItem[]> {
     const data = await request<{ items: Array<Parameters<typeof mapNotification>[0]> }>(
       "/api/notifications?limit=100&page=1",
@@ -951,6 +1087,7 @@ export const api = {
     resumeId?: string;
     jobTitle: string;
     company: string;
+    jobUrl?: string;
     jobDescription: string;
     preferInline?: boolean;
   }): Promise<{
@@ -1082,6 +1219,77 @@ export const api = {
       fileName,
       contentType: response.headers.get("content-type") || blob.type || "application/octet-stream",
     };
+  },
+
+  async exportResumeToBlob(input: {
+    structured: { source: Record<string, unknown>; tailored: Record<string, unknown> };
+    jobTitle: string;
+    company: string;
+    format?: "pdf" | "docx";
+  }): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+    const format = input.format ?? "pdf";
+    const response = await requestBlob("/api/ai/export-resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ structured: input.structured, jobTitle: input.jobTitle, company: input.company, format }),
+    });
+
+    if (!response.ok) {
+      const rawBody = await response.text().catch(() => "");
+      let message = rawBody;
+      try { const p = JSON.parse(rawBody) as { error?: string }; if (p?.error) message = p.error; } catch { /* noop */ }
+      throw new Error(message || `Failed to export resume (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const cd = response.headers.get("content-disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/i);
+    const fileName = match?.[1] || `resume.${format}`;
+    return { blob, fileName, contentType: response.headers.get("content-type") || blob.type };
+  },
+
+  async bidderClients(): Promise<import("./types").BidderClient[]> {
+    return request("/api/bidder/clients");
+  },
+
+  async switchWorkspace(managerId: string): Promise<void> {
+    return request("/api/bidder/workspace", {
+      method: "POST",
+      body: JSON.stringify({ managerId }),
+    });
+  },
+
+  async adminGetBidderClients(bidderId: string): Promise<import("./types").BidderClient[]> {
+    return request(`/api/admin/bidders/${bidderId}/clients`);
+  },
+
+  async adminAssignClient(bidderId: string, managerId: string): Promise<import("./types").BidderClient> {
+    return request(`/api/admin/bidders/${bidderId}/clients`, {
+      method: "POST",
+      body: JSON.stringify({ managerId }),
+    });
+  },
+
+  async adminRemoveClient(bidderId: string, managerId: string): Promise<void> {
+    return request(`/api/admin/bidders/${bidderId}/clients/${managerId}`, {
+      method: "DELETE",
+    });
+  },
+
+  async clockStatus(): Promise<import("./types").ClockStatus> {
+    return request("/api/time/status");
+  },
+
+  async clockIn(): Promise<{ id: string; clockedInAt: string }> {
+    return request("/api/time/clock-in", { method: "POST" });
+  },
+
+  async clockOut(): Promise<{ id: string; clockedInAt: string; clockedOutAt: string; durationSecs: number }> {
+    return request("/api/time/clock-out", { method: "POST" });
+  },
+
+  async adminTimeEntries(): Promise<import("./types").TimeEntry[]> {
+    return request("/api/admin/time-entries");
   },
 };
 

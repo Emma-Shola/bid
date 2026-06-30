@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "node server.js",
     "dev:ws": "node server.js",
@@ -39,6 +42,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "redis": "^5.12.1",
+    "tsx": "^4.21.0",
     "ws": "^8.20.0",
     "zod": "^3.24.2"
   },
@@ -49,7 +53,6 @@
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.30",
     "prisma": "^6.7.0",
-    "tsx": "^4.21.0",
     "typescript": "^5.8.2"
   }
 }

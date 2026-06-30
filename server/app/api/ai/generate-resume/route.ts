@@ -7,13 +7,10 @@ import { generateResumeContent } from "@/lib/openai";
 import { persistNotifications } from "@/lib/notifications";
 import { jsonError } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
-import { createBackgroundJob, markBackgroundJobQaRequired } from "@/lib/background-jobs";
+import { createBackgroundJob, markBackgroundJobCompleted, markBackgroundJobQaRequired } from "@/lib/background-jobs";
 import { enqueueResumeGenerationJob } from "@/lib/background-queue";
-import { extractCandidateNameFromResumeText, resolveResumeSourceText } from "@/lib/resume-source";
-import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
-import { extractStructuredResumeFromText } from "@/lib/resume/structured-json";
-import { createGeneratedResumeRecord } from "@/lib/resume/persistence";
 import { toPrismaJson } from "@/lib/json";
+import { CandidateProfileSchema, type CandidateProfile } from "@/lib/resume/candidate-profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,12 +31,14 @@ async function resolveTemplateResume(input: {
     orderBy: {
       updatedAt: "desc"
     },
+    take: 20,
     select: {
       id: true,
       managerId: true,
       title: true,
-      originalText: true,
-      fileUrl: true,
+      candidateProfile: true,
+      resumeRulesText: true,
+      profileStatus: true,
       createdAt: true,
       updatedAt: true
     }
@@ -49,7 +48,13 @@ async function resolveTemplateResume(input: {
     return resumes.find((resume) => resume.id === input.resumeId) ?? null;
   }
 
-  return resumes.find((resume) => isRecoverableResumeSource(resume.originalText)) ?? resumes[0] ?? null;
+  // Prefer explicitly approved resumes, then any with profile+rules
+  return (
+    resumes.find((resume) => resume.profileStatus === "approved") ??
+    resumes.find((resume) => Boolean(resume.candidateProfile && resume.resumeRulesText)) ??
+    resumes[0] ??
+    null
+  );
 }
 
 async function finalizeGeneratedResume(input: {
@@ -57,29 +62,12 @@ async function finalizeGeneratedResume(input: {
   templateResumeId: string;
   jobTitle: string;
   company: string;
-  jobDescription: string;
   backgroundJobId: string;
   mode: "inline" | "queued";
   result: Awaited<ReturnType<typeof generateResumeContent>>;
 }) {
   const { cache, ...publicResult } = input.result;
   const requiresQa = !input.result.validation.ok;
-  const generatedResumeId =
-    cache.hit && cache.recordId
-      ? cache.recordId
-      : (
-          await createGeneratedResumeRecord({
-            resumeId: input.templateResumeId,
-            bidderId: input.authUserId,
-            jobTitle: input.jobTitle,
-            company: input.company,
-            jobDescription: input.jobDescription,
-            cacheFingerprint: cache.fingerprint,
-            modelName: cache.modelName,
-            promptVersion: cache.promptVersion,
-            result: input.result
-          })
-        ).id;
 
   await prisma.auditLog.create({
     data: {
@@ -87,10 +75,10 @@ async function finalizeGeneratedResume(input: {
       action: "resume.generated",
       details: {
         resumeId: input.templateResumeId,
-        generatedResumeId,
         jobTitle: input.jobTitle,
         company: input.company,
-        mode: input.mode
+        mode: input.mode,
+        cacheHit: cache.hit,
       }
     }
   });
@@ -99,44 +87,36 @@ async function finalizeGeneratedResume(input: {
     type: requiresQa ? "resume.qa_required" : "resume.generated",
     title: requiresQa ? "Resume needs review" : "Resume generated",
     body: requiresQa
-      ? `A tailored resume was generated for ${input.jobTitle} at ${input.company}, but it needs QA review before download.`
-      : `A tailored resume was generated for ${input.jobTitle} at ${input.company}.`,
+      ? `Resume for ${input.jobTitle} at ${input.company} needs QA review before download.`
+      : `Resume for ${input.jobTitle} at ${input.company} is ready — check your download folder.`,
     link: "/api/ai/generate-resume",
     data: {
       resumeId: input.templateResumeId,
-      generatedResumeId,
       jobTitle: input.jobTitle,
       company: input.company,
       requiresQa
     }
   });
 
-  const terminalResult = {
-    ...publicResult,
+  // Metadata only — resume content is returned to the client but never persisted server-side.
+  const dbResult = {
     meta: {
       resumeId: input.templateResumeId,
-      generatedResumeId,
       jobTitle: input.jobTitle,
       company: input.company,
       mode: input.mode,
-      requiresQa
+      requiresQa,
+      cacheHit: cache.hit,
     }
   };
 
   if (requiresQa) {
-    await markBackgroundJobQaRequired(input.backgroundJobId, terminalResult);
+    await markBackgroundJobQaRequired(input.backgroundJobId, dbResult, publicResult);
   } else {
-    await prisma.backgroundJob.update({
-      where: { id: input.backgroundJobId },
-      data: {
-        status: "completed",
-        result: toPrismaJson(terminalResult),
-        completedAt: new Date()
-      }
-    });
+    await markBackgroundJobCompleted(input.backgroundJobId, dbResult, publicResult);
   }
 
-  return { generatedResumeId, publicResult };
+  return { publicResult };
 }
 
 export async function POST(req: NextRequest) {
@@ -172,56 +152,34 @@ export async function POST(req: NextRequest) {
       return jsonError("Bidder profile is missing", 400);
     }
 
-    let templateResume = await resolveTemplateResume({
+    const templateResume = await resolveTemplateResume({
       managerId: bidder.managerId,
       resumeId: parsed.data.resumeId
     });
 
-    if (!templateResume && bidder.managerId && bidder.manager?.managerProfile) {
-      const profile = bidder.manager.managerProfile;
-      const recoveredText =
-        profile.templateResumeText?.trim() ||
-        (profile.templateResumeUrl ? await resolveResumeSourceText({ resumeUrl: profile.templateResumeUrl }) : "");
-
-      if (recoveredText.trim()) {
-        templateResume = await prisma.resume.create({
-          data: {
-            managerId: bidder.managerId,
-            title: `${profile.fullName || bidder.manager.username} - Imported Template`,
-            originalText: recoveredText.trim(),
-            fileUrl: profile.templateResumeUrl
-          }
-        });
-      }
-    }
-
     if (!templateResume) {
-      return jsonError("No manager resume template found. Ask admin to upload a template for your manager.", 422);
+      return jsonError("No resume template found. Ask an admin to upload a resume for your manager.", 422);
     }
 
     if (templateResume.managerId !== bidder.managerId) {
       return jsonError("You do not have access to this resume template.", 403);
     }
 
-    const sourceResumeText = templateResume.originalText.trim();
-    if (!sourceResumeText) {
-      return jsonError("Selected template has no usable text content.", 422);
-    }
-
-    if (looksLikeResumeInstructionText(sourceResumeText) && !isRecoverableResumeSource(sourceResumeText)) {
-      const recoveredStructuredResume = extractStructuredResumeFromText(
-        sourceResumeText,
-        extractCandidateNameFromResumeText(sourceResumeText)
+    // Hard gate: resume must be reviewed and approved by an admin before generation
+    if (
+      !templateResume.candidateProfile ||
+      !templateResume.resumeRulesText ||
+      templateResume.profileStatus !== "approved"
+    ) {
+      return jsonError(
+        "Your manager's resume has not been approved by an admin yet. An admin must review and approve the candidate profile before you can generate resumes.",
+        422
       );
-      if (!recoveredStructuredResume) {
-        return jsonError(
-          "Selected resume template looks like an instruction prompt, not a real resume. Upload the original resume instead.",
-          422
-        );
-      }
     }
 
-    const candidateName = extractCandidateNameFromResumeText(sourceResumeText);
+    const candidateProfile = CandidateProfileSchema.parse(templateResume.candidateProfile) as CandidateProfile;
+    const resumeRulesText = templateResume.resumeRulesText;
+    const candidateName = candidateProfile.personalInfo.name;
 
     const backgroundJob = await createBackgroundJob({
       userId: auth.user.id,
@@ -231,8 +189,10 @@ export async function POST(req: NextRequest) {
         jobTitle: parsed.data.jobTitle,
         company: parsed.data.company,
         jobDescription: parsed.data.jobDescription,
-        resumeText: sourceResumeText,
-        candidateName
+        jobUrl: parsed.data.jobUrl || null,
+        candidateName,
+        candidateProfile: toPrismaJson(candidateProfile),
+        resumeRulesText
       }
     });
 
@@ -241,16 +201,16 @@ export async function POST(req: NextRequest) {
         jobTitle: parsed.data.jobTitle,
         company: parsed.data.company,
         jobDescription: parsed.data.jobDescription,
-        resumeText: sourceResumeText,
-        candidateName
+        candidateName,
+        candidateProfile,
+        resumeRulesText
       });
 
-      const { publicResult, generatedResumeId } = await finalizeGeneratedResume({
+      const { publicResult } = await finalizeGeneratedResume({
         authUserId: auth.user.id,
         templateResumeId: templateResume.id,
         jobTitle: parsed.data.jobTitle,
         company: parsed.data.company,
-        jobDescription: parsed.data.jobDescription,
         backgroundJobId: backgroundJob.id,
         mode: "inline",
         result
@@ -268,7 +228,6 @@ export async function POST(req: NextRequest) {
             ...publicResult,
             meta: {
               resumeId: templateResume.id,
-              generatedResumeId,
               jobTitle: parsed.data.jobTitle,
               company: parsed.data.company,
               mode: "inline"
@@ -287,8 +246,9 @@ export async function POST(req: NextRequest) {
         jobTitle: parsed.data.jobTitle,
         company: parsed.data.company,
         jobDescription: parsed.data.jobDescription,
-        resumeText: sourceResumeText,
-        candidateName
+        candidateName,
+        candidateProfile: toPrismaJson(candidateProfile),
+        resumeRulesText
       }
     }).catch((error) => {
       console.warn("resume queue enqueue failed, falling back to inline generation", error);
@@ -313,16 +273,16 @@ export async function POST(req: NextRequest) {
       jobTitle: parsed.data.jobTitle,
       company: parsed.data.company,
       jobDescription: parsed.data.jobDescription,
-      resumeText: sourceResumeText,
-      candidateName
+      candidateName,
+      candidateProfile,
+      resumeRulesText
     });
 
-    const { publicResult, generatedResumeId } = await finalizeGeneratedResume({
+    const { publicResult } = await finalizeGeneratedResume({
       authUserId: auth.user.id,
       templateResumeId: templateResume.id,
       jobTitle: parsed.data.jobTitle,
       company: parsed.data.company,
-      jobDescription: parsed.data.jobDescription,
       backgroundJobId: backgroundJob.id,
       mode: "queued",
       result
@@ -338,7 +298,6 @@ export async function POST(req: NextRequest) {
           ...publicResult,
           meta: {
             resumeId: templateResume.id,
-            generatedResumeId,
             jobTitle: parsed.data.jobTitle,
             company: parsed.data.company
           }
@@ -352,11 +311,9 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
 
     if (
-      /instruction-only txt files cannot be used as source resumes/i.test(message) ||
-      /source resume text is required/i.test(message) ||
-      /selected template has no usable text content/i.test(message) ||
-      /looks like a resume instruction prompt/i.test(message) ||
-      /no manager resume template found/i.test(message)
+      /has not been approved by an admin/i.test(message) ||
+      /no resume template found/i.test(message) ||
+      /do not have access to this resume template/i.test(message)
     ) {
       return jsonError(message || "Invalid resume source", 422);
     }

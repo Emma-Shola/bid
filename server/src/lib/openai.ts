@@ -4,8 +4,9 @@ export async function generateResumeContent(input: {
   jobTitle: string;
   company: string;
   jobDescription: string;
-  resumeText?: string;
   candidateName?: string;
+  candidateProfile: unknown;
+  resumeRulesText?: string;
 }) {
   return generateDeterministicResumeContent(input);
 }

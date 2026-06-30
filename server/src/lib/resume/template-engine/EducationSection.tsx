@@ -3,48 +3,32 @@ import { Text, View } from "@react-pdf/renderer";
 import type { ResumeExportModel } from "../exporter";
 import { Bullet } from "./Bullet";
 import { SectionHeading } from "./SectionHeading";
-import { resumePdfStyles as styles } from "./styles";
+import { resumePdfStyles as s } from "./styles";
 
-type EducationSectionProps = Pick<ResumeExportModel, "education">;
-
-export function EducationSection({ education }: EducationSectionProps) {
-  if (education.length === 0) {
-    return null;
-  }
+export function EducationSection({ education }: Pick<ResumeExportModel, "education">) {
+  if (education.length === 0) return null;
 
   return (
-    <View style={styles.section}>
+    <View style={s.section}>
       <SectionHeading>Education</SectionHeading>
-      <View style={styles.sectionBody}>
-        {education.map((item, index) => (
-          <View key={`${item.school}-${index}`} style={styles.entry}>
-            <View style={styles.entryRow}>
-              <View style={styles.entryLeft}>
-                <Text style={styles.entryRole}>{item.degree}</Text>
+      {education.map((item, i) => {
+        const schoolLine = [item.school, item.duration].filter(Boolean).join(" · ");
+        return (
+          <View key={`${item.school}-${i}`} style={s.eduEntry} wrap={false}>
+            <Text style={s.eduDegree}>{item.degree}</Text>
+            {schoolLine ? (
+              <Text style={s.eduSchoolLine}>{schoolLine}</Text>
+            ) : null}
+            {item.details.length > 0 ? (
+              <View style={s.eduDetailsWrap}>
+                {item.details.map((d, j) => (
+                  <Bullet key={j}>{d}</Bullet>
+                ))}
               </View>
-              <View style={styles.entryRight}>
-                {item.duration ? <Text style={styles.entryDate}>{item.duration}</Text> : <Text style={styles.entryDate}> </Text>}
-              </View>
-            </View>
-            <View style={styles.entryRow}>
-              <View style={styles.entryLeft}>
-                <Text style={styles.entryCompany}>{item.school}</Text>
-              </View>
-              <View style={styles.entryRight}>
-                {item.location ? <Text style={styles.entryLocation}>{item.location}</Text> : <Text style={styles.entryLocation}> </Text>}
-              </View>
-            </View>
-            <View style={styles.educationDetails}>
-              {item.details.map((detail, detailIndex) => (
-                <Bullet key={`${item.school}-${index}-${detailIndex}`}>{detail}</Bullet>
-              ))}
-            </View>
+            ) : null}
           </View>
-        ))}
-      </View>
+        );
+      })}
     </View>
   );
 }
-
-
-

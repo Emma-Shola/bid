@@ -3,24 +3,18 @@ import { View } from "@react-pdf/renderer";
 import type { ResumeExportModel } from "../exporter";
 import { Bullet } from "./Bullet";
 import { SectionHeading } from "./SectionHeading";
-import { resumePdfStyles as styles } from "./styles";
+import { resumePdfStyles as s } from "./styles";
 
-type CertificatesSectionProps = Pick<ResumeExportModel, "certificates">;
-
-export function CertificatesSection({ certificates }: CertificatesSectionProps) {
-  if (certificates.length === 0) {
-    return null;
-  }
+export function CertificatesSection({ certificates }: Pick<ResumeExportModel, "certificates">) {
+  const certs = certificates.filter((c) => c.trim());
+  if (certs.length === 0) return null;
 
   return (
-    <View style={styles.section}>
-      <SectionHeading>Certificates</SectionHeading>
-      <View style={styles.sectionBody}>
-        {certificates.map((certificate, index) => (
-          <Bullet key={`${certificate}-${index}`}>{certificate}</Bullet>
-        ))}
-      </View>
+    <View style={s.section}>
+      <SectionHeading>Certifications</SectionHeading>
+      {certs.map((cert, i) => (
+        <Bullet key={i}>{cert}</Bullet>
+      ))}
     </View>
   );
 }
-

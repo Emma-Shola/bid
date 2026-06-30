@@ -117,29 +117,38 @@ export async function markBackgroundJobRetrying(jobId: string, error: unknown, a
   return job;
 }
 
-export async function markBackgroundJobCompleted(jobId: string, result: Prisma.InputJsonValue) {
+// dbResult is persisted; resumeContent is pushed via WebSocket only (never stored).
+export async function markBackgroundJobCompleted(
+  jobId: string,
+  dbResult: Prisma.InputJsonValue,
+  resumeContent?: Prisma.InputJsonValue
+) {
   const job = await updateBackgroundJob(jobId, {
     status: "completed",
-    result: toPrismaJson(result),
+    result: toPrismaJson(dbResult),
     completedAt: new Date(),
     error: null,
     failedAt: null
   });
 
-  void publishEvent("background-job.updated", { job }, jobAudience(job));
+  void publishEvent("background-job.updated", { job, ...(resumeContent ? { content: resumeContent } : {}) }, jobAudience(job));
   return job;
 }
 
-export async function markBackgroundJobQaRequired(jobId: string, result: Prisma.InputJsonValue) {
+export async function markBackgroundJobQaRequired(
+  jobId: string,
+  dbResult: Prisma.InputJsonValue,
+  resumeContent?: Prisma.InputJsonValue
+) {
   const job = await updateBackgroundJob(jobId, {
     status: "qa_required",
-    result: toPrismaJson(result),
+    result: toPrismaJson(dbResult),
     completedAt: new Date(),
     error: null,
     failedAt: null
   });
 
-  void publishEvent("background-job.updated", { job }, jobAudience(job));
+  void publishEvent("background-job.updated", { job, ...(resumeContent ? { content: resumeContent } : {}) }, jobAudience(job));
   return job;
 }
 

@@ -10,13 +10,20 @@ import { Button } from "@/components/ui/button";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
 import { useChannel } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 import type { BackgroundJob } from "@/lib/types";
 
 export default function Jobs() {
   const qc = useQueryClient();
   const { user, loading } = useAuth();
   const enabled = !loading && user?.role === "admin";
-  const { data: jobs = [] } = useQuery({ queryKey: ["jobs"], queryFn: api.listJobs, enabled, refetchOnMount: "always", retry: false });
+  const { data: jobs = [] } = useQuery({
+    queryKey: ["jobs"],
+    queryFn: api.listJobs,
+    enabled,
+    refetchOnMount: "always",
+    retry: false,
+  });
 
   useChannel("background-job.updated", () => {
     qc.invalidateQueries({ queryKey: ["jobs"] });
@@ -28,6 +35,7 @@ export default function Jobs() {
       qc.invalidateQueries({ queryKey: ["jobs"] });
       toast.success("Job re-queued");
     },
+    onError: (err: Error) => toast.error(err.message || "Failed to retry job"),
   });
 
   const retryDLQ = useMutation({
@@ -36,32 +44,51 @@ export default function Jobs() {
       qc.invalidateQueries({ queryKey: ["jobs"] });
       toast.success(`Re-queued ${count} dead-lettered resume jobs`);
     },
+    onError: (err: Error) => toast.error(err.message || "Failed to retry DLQ"),
   });
 
   const stats = {
-    queued: jobs.filter((job) => job.status === "queued").length,
-    running: jobs.filter((job) => job.status === "running").length,
-    failed: jobs.filter((job) => job.status === "failed").length,
-    dead: jobs.filter((job) => job.status === "dead_letter").length,
+    queued: jobs.filter((j) => j.status === "queued").length,
+    running: jobs.filter((j) => j.status === "running").length,
+    failed: jobs.filter((j) => j.status === "failed").length,
+    dead: jobs.filter((j) => j.status === "dead_letter").length,
   };
 
+  const activeJobs = jobs.filter((j) => j.status === "running" || j.status === "queued");
+
   const columns: Column<BackgroundJob>[] = [
-    { key: "id", header: "Job", cell: (row) => <span className="font-mono text-xs">{row.id}</span> },
+    {
+      key: "id",
+      header: "Job",
+      cell: (row) => <span className="font-mono text-xs text-muted-foreground">{row.id.slice(0, 16)}…</span>,
+    },
     {
       key: "kind",
       header: "Kind",
       sortable: true,
       sortValue: (row) => row.kind,
-      cell: (row) => <span className="capitalize">{row.kind.replace("_", " ")}</span>,
+      cell: (row) => <span className="capitalize text-sm">{row.kind.replace(/_/g, " ")}</span>,
     },
-    { key: "status", header: "Status", sortable: true, sortValue: (row) => row.status, cell: (row) => <StatusBadge value={row.status} /> },
+    {
+      key: "status",
+      header: "Status",
+      sortable: true,
+      sortValue: (row) => row.status,
+      cell: (row) => <StatusBadge value={row.status} />,
+    },
     {
       key: "progress",
       header: "Progress",
       cell: (row) => (
         <div className="flex items-center gap-2">
           <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-            <div className="h-full bg-primary transition-all duration-500" style={{ width: `${row.progress}%` }} />
+            <div
+              className={cn(
+                "h-full transition-all duration-500",
+                row.status === "running" ? "bg-primary animate-pulse" : "bg-muted-foreground/50",
+              )}
+              style={{ width: `${row.progress}%` }}
+            />
           </div>
           <span className="text-xs tabular-nums text-muted-foreground">{row.progress}%</span>
         </div>
@@ -70,12 +97,21 @@ export default function Jobs() {
     {
       key: "attempts",
       header: "Attempts",
-      cell: (row) => <span className="tabular-nums text-muted-foreground">{row.attempts}/{row.maxAttempts}</span>,
+      cell: (row) => (
+        <span className="tabular-nums text-muted-foreground">
+          {row.attempts}/{row.maxAttempts}
+        </span>
+      ),
     },
     {
       key: "error",
       header: "Last error",
-      cell: (row) => row.error ? <span className="line-clamp-1 text-xs text-[hsl(var(--destructive))]">{row.error}</span> : <span className="text-xs text-muted-foreground">—</span>,
+      cell: (row) =>
+        row.error ? (
+          <span className="line-clamp-1 text-xs text-destructive">{row.error}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
     },
     {
       key: "actions",
@@ -85,7 +121,7 @@ export default function Jobs() {
         <Button
           size="sm"
           variant="outline"
-          disabled={!["failed", "dead_letter"].includes(row.status)}
+          disabled={!["failed", "dead_letter"].includes(row.status) || retry.isPending}
           onClick={() => retry.mutate(row.id)}
         >
           <RefreshCw className="mr-1.5 h-3 w-3" />
@@ -110,24 +146,64 @@ export default function Jobs() {
               disabled={retryDLQ.isPending || stats.dead === 0}
             >
               <Repeat className="mr-1.5 h-4 w-4" />
-              Retry DLQ resumes
+              Retry DLQ ({stats.dead})
             </Button>
           </div>
         }
       />
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="Queued" value={stats.queued} />
-        <StatCard label="Running" value={stats.running} hint="Realtime" />
+        <StatCard label="Running" value={stats.running} hint="Live" />
         <StatCard label="Failed" value={stats.failed} />
         <StatCard label="Dead-letter" value={stats.dead} />
       </div>
+
+      {/* Live active panel — only shown when there's work in progress */}
+      {activeJobs.length > 0 && (
+        <section className="rounded-xl border border-border bg-card shadow-sm">
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+              <h2 className="text-sm font-semibold">Active now</h2>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground">{activeJobs.length} in flight</span>
+          </header>
+          <ul className="divide-y divide-border">
+            {activeJobs.map((job) => (
+              <li key={job.id} className="space-y-2 px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium capitalize">{job.kind.replace(/_/g, " ")}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{job.id}</p>
+                  </div>
+                  <StatusBadge value={job.status} />
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={cn(
+                      "h-full transition-all duration-500",
+                      job.status === "running" ? "bg-primary animate-pulse" : "bg-muted-foreground/40",
+                    )}
+                    style={{ width: `${job.progress}%` }}
+                  />
+                </div>
+                <p className="text-xs tabular-nums text-muted-foreground">
+                  {job.progress}% · attempt {job.attempts}/{job.maxAttempts}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <DataTable
         data={jobs}
         columns={columns}
         rowKey={(row) => row.id}
-        searchPlaceholder="Search id, kind, error..."
+        searchPlaceholder="Search id, kind, error…"
         searchKeys={(row) => `${row.id} ${row.kind} ${row.error ?? ""}`}
-        pageSize={12}
+        pageSize={15}
       />
     </div>
   );

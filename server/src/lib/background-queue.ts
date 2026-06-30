@@ -102,6 +102,8 @@ export async function enqueueResumeGenerationJob(input: {
     resumeText?: string;
     resumeUrl?: string;
     candidateName?: string;
+    candidateProfile?: Prisma.InputJsonValue;
+    resumeRulesText?: string;
   };
   baseAttempts?: number;
 }) {

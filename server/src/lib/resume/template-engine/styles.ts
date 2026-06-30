@@ -1,202 +1,267 @@
-﻿import { StyleSheet } from "@react-pdf/renderer";
-import { ATS_CLASSIC_TEMPLATE } from "./atsClassic";
-import { RESUME_RENDER_TOKENS } from "@/resume-rendering";
+/**
+ * Single source of truth for all PDF layout styles.
+ *
+ * Spacing rules:
+ *  1. Every measurement comes from RESUME_RENDER_TOKENS — no hardcoded numbers.
+ *  2. Vertical rhythm: use ONLY marginBottom on children (never mix marginTop
+ *     and marginBottom on adjacent siblings — Yoga does not collapse margins).
+ *  3. Exception: section.marginTop creates the inter-section gap.
+ *  4. ONE lineHeight (ty.lineHeight = 1.25) for all body text.
+ *
+ * Spacing contract:
+ *  header.marginBottom  (8)  +  section.marginTop  (4)  = 12pt header→first section
+ *  entry.marginBottom   (8)  +  section.marginTop  (4)  = 12pt between sections
+ *  entry.marginBottom   (8)  between experience entries
+ *  bulletsWrap.marginTop (4) from company line to first bullet
+ *  bulletRow.marginBottom (2) between bullets
+ *  skillRow.marginBottom  (2) between skill rows
+ */
 
-const { typography, composition } = ATS_CLASSIC_TEMPLATE;
-const { colors, fonts } = RESUME_RENDER_TOKENS;
+import { StyleSheet } from "@react-pdf/renderer";
+import { RESUME_RENDER_TOKENS as T } from "@/resume-rendering";
+
+const sp   = T.spacing;
+const ty   = T.typography;
+const comp = T.composition;
+const { colors, fonts } = T;
 
 export const resumePdfStyles = StyleSheet.create({
+
+  // ── Page ──────────────────────────────────────────────────────────────────
   page: {
-    paddingTop: composition.pagePadding,
-    paddingRight: composition.pagePadding,
-    paddingBottom: composition.pagePadding,
-    paddingLeft: composition.pagePadding,
-    fontFamily: fonts.serif,
-    color: colors.body,
-    fontSize: typography.bodySize,
-    lineHeight: typography.lineHeight
+    paddingTop:      comp.pagePadding,
+    paddingRight:    comp.pagePadding,
+    paddingBottom:   comp.pagePadding,
+    paddingLeft:     comp.pagePadding,
+    fontFamily:      fonts.sans,
+    color:           colors.body,
+    fontSize:        ty.bodySize,
+    lineHeight:      ty.lineHeight,
+    backgroundColor: colors.page,
   },
   document: {
-    flexDirection: "column"
+    flexDirection: "column",
   },
+
+  // ── Header ────────────────────────────────────────────────────────────────
   header: {
-    alignItems: "flex-start",
-    marginBottom: composition.headerGap,
-    paddingBottom: 3.5,
-    borderBottomWidth: 0.9,
-    borderBottomColor: colors.rule
+    marginBottom: comp.headerGap,     // 8pt → combined with section.marginTop(4) = 12pt gap
+  },
+  headerNameRow: {
+    flexDirection: "row",
+    alignItems:   "center",
+    marginBottom:  sp.sm,             // 4pt: name/title row → rule
+  },
+  headerNameCol: {
+    flex:         1,
+    paddingRight: sp.md,              // 8pt breathing room before title column
+  },
+  headerTitleCol: {
+    flexShrink:  0,
+    maxWidth:    200,
+    alignItems:  "flex-end",
   },
   headerName: {
     fontFamily: fonts.sansBold,
-    fontSize: typography.nameSize,
-    lineHeight: 1,
-    color: colors.ink,
-    textAlign: "left"
+    fontSize:   ty.nameSize,          // 24pt
+    lineHeight: 1.1,                  // display text — tighter than body
+    color:      colors.ink,
   },
   headerTitle: {
-    marginTop: 2,
-    fontFamily: fonts.sansBold,
-    fontSize: typography.titleSize,
-    lineHeight: 1.01,
-    color: colors.muted,
-    textAlign: "left",
-    letterSpacing: 0.12
+    fontFamily: fonts.sansBoldItalic,
+    fontSize:   ty.titleSize,         // 10pt
+    lineHeight: 1.2,
+    color:      colors.accent,
+    textAlign:  "right",
+  },
+  headerRule: {
+    borderBottomWidth: 0.85,
+    borderBottomColor: colors.rule,
+    marginBottom:      sp.sm,         // 4pt: rule → contact line
   },
   headerContact: {
-    marginTop: 2,
     fontFamily: fonts.sans,
-    fontSize: typography.subtextSize,
-    lineHeight: 1.04,
-    color: colors.muted,
-    textAlign: "left"
+    fontSize:   ty.subtextSize,       // 8.5pt
+    lineHeight: ty.lineHeight,
+    color:      colors.muted,
   },
   headerLinks: {
-    marginTop: 0.8,
     fontFamily: fonts.sans,
-    fontSize: Math.max(7.8, typography.subtextSize - 0.35),
-    lineHeight: 1.03,
-    color: colors.faint,
-    textAlign: "left"
+    fontSize:   ty.subtextSize - 0.5, // 8pt
+    lineHeight: ty.lineHeight,
+    color:      colors.faint,
   },
+
+  // ── Section wrapper ───────────────────────────────────────────────────────
   section: {
-    marginTop: composition.sectionGap
+    marginTop: comp.sectionGap,       // 4pt — combined with entry.marginBottom(8) = 12pt total
   },
-  sectionHeadingWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 1.75
+
+  // ── Section heading ───────────────────────────────────────────────────────
+  sectionHeadWrap: {
+    marginBottom: comp.sectionBodyGap, // 4pt: rule → section body
   },
-  sectionHeading: {
-    fontFamily: fonts.sansBold,
-    fontSize: typography.sectionHeadingSize,
-    lineHeight: 1,
-    color: colors.ink,
+  sectionHead: {
+    fontFamily:    fonts.sansBold,
+    fontSize:      ty.sectionHeadingSize, // 9pt
+    lineHeight:    1,
+    color:         colors.accent,
     textTransform: "uppercase",
-    letterSpacing: 1.25
+    letterSpacing: 1.1,
+    marginBottom:  sp.xs,             // 2pt: heading text → rule
   },
-  sectionHeadingRule: {
-    flex: 1,
-    marginLeft: 8,
-    borderBottomWidth: 0.75,
-    borderBottomColor: colors.rule
+  sectionRule: {
+    borderBottomWidth: 0.85,
+    borderBottomColor: colors.rule,
   },
-  sectionBody: {
-    marginTop: composition.sectionBodyGap
+
+  // ── Summary ───────────────────────────────────────────────────────────────
+  summaryText: {
+    fontFamily: fonts.sans,
+    fontSize:   ty.bodySize,
+    lineHeight: 1.35,
+    color:      colors.body,
+    textAlign:  "justify",
   },
-  summary: {
-    fontFamily: fonts.serif,
-    fontSize: typography.bodySize,
-    lineHeight: 1.16,
-    color: colors.body,
-    textAlign: "left"
-  },
-  skillRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 0.55
-  },
-  skillLabel: {
-    width: composition.labelWidth,
-    flexShrink: 0,
-    fontFamily: fonts.sansBold,
-    fontSize: typography.bodySize - 0.2,
-    lineHeight: 1.04,
-    color: colors.ink
-  },
-  skillText: {
-    flex: 1,
-    fontFamily: fonts.serif,
-    fontSize: typography.bodySize,
-    lineHeight: 1.13,
-    color: colors.body,
-    textAlign: "left"
-  },
+
+  // ── Entry wrapper (experience & education) ────────────────────────────────
   entry: {
-    marginBottom: composition.entryGap + 0.15
+    marginBottom: comp.entryGap,      // 8pt between entries
   },
-  entryHeader: {
-    marginBottom: 0.35
-  },
-  entryRow: {
+
+  // ── Role + Date row ───────────────────────────────────────────────────────
+  roleDateRow: {
     flexDirection: "row",
-    alignItems: "baseline"
+    alignItems:   "baseline",         // text baselines align across columns
   },
-  entryLeft: {
-    flexGrow: 1,
-    flexShrink: 1,
-    minWidth: 0,
-    paddingRight: composition.rightColumnGap
+  roleCol: {
+    flex:         1,
+    flexShrink:   1,
+    paddingRight: comp.rightColumnGap, // 8pt gap before date column
   },
-  entryRight: {
-    width: composition.metaWidth,
+  dateCol: {
+    width:      comp.metaWidth,       // 90pt — fits "Feb 2024 – Present"
     flexShrink: 0,
-    alignItems: "flex-end"
+    alignItems: "flex-end",
   },
-  entryRole: {
+  roleText: {
     fontFamily: fonts.sansBold,
-    fontSize: 10.15,
-    lineHeight: 1.03,
-    color: colors.ink
+    fontSize:   ty.roleSize,          // 10pt
+    lineHeight: ty.lineHeight,
+    color:      colors.ink,
   },
-  entryDate: {
+  dateText: {
     fontFamily: fonts.sans,
-    fontSize: 8.2,
-    lineHeight: 1.03,
-    color: colors.faint,
-    textAlign: "right"
+    fontSize:   ty.subtextSize,       // 8.5pt
+    lineHeight: ty.lineHeight,
+    color:      colors.faint,
+    textAlign:  "right",
   },
-  entryCompany: {
-    fontFamily: fonts.sansBold,
-    fontSize: 9.75,
-    lineHeight: 1.03,
-    color: colors.ink
+
+  // ── Company / Location italic line ────────────────────────────────────────
+  // Sits directly under the role row — no extra margin, lineHeight provides separation.
+  companyLine: {
+    fontFamily: fonts.sansItalic,
+    fontSize:   9,
+    lineHeight: ty.lineHeight,
+    color:      colors.faint,
   },
-  entryLocation: {
-    fontFamily: fonts.sans,
-    fontSize: 8.0,
-    lineHeight: 1.03,
-    color: colors.faint,
-    textAlign: "right"
+
+  // ── Bullets container ─────────────────────────────────────────────────────
+  bulletsWrap: {
+    marginTop: comp.sectionBodyGap,   // 4pt: company line → first bullet
   },
-  entryBody: {
-    marginTop: 1.05
-  },
+
+  // ── Bullet row — hanging indent ───────────────────────────────────────────
+  // paddingLeft = INDENT depth (14pt).
+  // bulletMark: width = INDENT, marginLeft = –INDENT  →  mark hangs into indent zone.
+  // bulletText: flex: 1  →  text wraps flush at the 14pt indent mark.
   bulletRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    marginTop: composition.bulletGap,
-    paddingLeft: composition.bulletIndent - 0.5
+    alignItems:   "flex-start",
+    paddingLeft:   comp.bulletIndent, // 14pt indent
+    marginBottom:  comp.bulletGap,    // 2pt between bullets
   },
   bulletMark: {
-    width: 6,
-    fontFamily: fonts.sansBold,
-    fontSize: 6.35,
-    lineHeight: 1.01,
-    color: colors.muted
+    width:        comp.bulletIndent,  // 14pt
+    marginLeft:  -comp.bulletIndent,  // –14pt → pull mark back into indent zone
+    fontFamily:   fonts.sans,
+    fontSize:     ty.bodySize,
+    lineHeight:   1.3,
+    color:        colors.muted,
+    paddingRight: 5,
+    textAlign:    "right",
   },
   bulletText: {
-    flex: 1,
-    fontFamily: fonts.serif,
-    fontSize: typography.bodySize - 0.05,
-    lineHeight: 1.145,
-    color: colors.body,
-    textAlign: "left"
+    flex:       1,
+    fontFamily: fonts.sans,
+    fontSize:   ty.bodySize,          // 9.5pt
+    lineHeight: 1.3,
+    color:      colors.body,
   },
-  sectionSpacer: {
-    height: 2
+
+  // ── Skills ────────────────────────────────────────────────────────────────
+  skillRow: {
+    flexDirection: "row",
+    alignItems:   "flex-start",
+    marginBottom:  comp.bulletGap,    // 2pt between skill rows
   },
-  denseSpacer: {
-    height: 2
+  skillLabel: {
+    width:      comp.labelWidth,      // 115pt
+    flexShrink: 0,
+    fontFamily: fonts.sansBold,
+    fontSize:   ty.bodySize,
+    lineHeight: ty.lineHeight,
+    color:      colors.ink,
   },
-  emptySpace: {
-    height: 3
+  skillText: {
+    flex:       1,
+    fontFamily: fonts.sans,
+    fontSize:   ty.bodySize,
+    lineHeight: ty.lineHeight,
+    color:      colors.body,
   },
-  educationDetails: {
-    marginTop: 1
+
+  // ── Education entry ───────────────────────────────────────────────────────
+  eduEntry: {
+    marginBottom: comp.entryGap,      // 8pt between edu entries
   },
-  certificateLine: {
-    marginTop: 1
-  }
+  eduDegree: {
+    fontFamily: fonts.sansBold,
+    fontSize:   ty.bodySize,
+    lineHeight: ty.lineHeight,
+    color:      colors.ink,
+  },
+  eduSchoolLine: {
+    fontFamily: fonts.sansItalic,
+    fontSize:   9,
+    lineHeight: ty.lineHeight,
+    color:      colors.faint,
+  },
+  eduDetailsWrap: {
+    marginTop: sp.xs,
+  },
+
+  // ── Kept for backward compatibility with any un-migrated callers ──────────
+  sectionHeadingWrap:  { marginBottom: comp.sectionBodyGap },
+  sectionHeading:      { fontFamily: fonts.sansBold, fontSize: ty.sectionHeadingSize, lineHeight: 1, color: colors.accent, textTransform: "uppercase", letterSpacing: 1.1, marginBottom: sp.xs },
+  sectionHeadingRule:  { borderBottomWidth: 0.85, borderBottomColor: colors.rule },
+  sectionBody:         { marginTop: 0 },
+  entryRole:           { fontFamily: fonts.sansBold, fontSize: ty.roleSize, lineHeight: ty.lineHeight, color: colors.ink },
+  entryDate:           { fontFamily: fonts.sans, fontSize: ty.subtextSize, lineHeight: ty.lineHeight, color: colors.faint, textAlign: "right" },
+  entryCompany:        { fontFamily: fonts.sansItalic, fontSize: 9, lineHeight: ty.lineHeight, color: colors.faint },
+  entryCompanyLine:    { fontFamily: fonts.sansItalic, fontSize: 9, lineHeight: ty.lineHeight, color: colors.faint },
+  entryRow:            { flexDirection: "row", alignItems: "baseline" },
+  entryLeft:           { flex: 1, flexShrink: 1, paddingRight: comp.rightColumnGap },
+  entryRight:          { width: comp.metaWidth, flexShrink: 0, alignItems: "flex-end" },
+  entryHeader:         { marginBottom: 0 },
+  entryBody:           { marginTop: comp.sectionBodyGap },
+  summary:             { fontFamily: fonts.sans, fontSize: ty.bodySize, lineHeight: 1.35, color: colors.body, textAlign: "justify" },
+  educationDetails:    { marginTop: sp.xs },
+  certificateLine:     { marginTop: 0 },
+  sectionSpacer:       { height: sp.sm },
+  denseSpacer:         { height: sp.xs },
+  emptySpace:          { height: sp.md },
+  skillBody:           { flex: 1, fontFamily: fonts.sans, fontSize: ty.bodySize, lineHeight: ty.lineHeight, color: colors.body },
+  bulletBody:          { flex: 1, fontFamily: fonts.sans, fontSize: ty.bodySize, lineHeight: 1.3, color: colors.body },
 });
-
-

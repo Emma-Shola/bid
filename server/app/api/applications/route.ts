@@ -114,8 +114,58 @@ export async function POST(req: NextRequest) {
 
     const auth = await getAuthUser(req);
     if (!auth) return jsonError("Unauthorized", 401);
+
+    const body = await req.json().catch(() => null);
+
+    // Managers can create applications on behalf of their bidders
+    if (auth.user.role === UserRole.manager) {
+      if (!body?.bidderId || typeof body.bidderId !== "string") {
+        return jsonError("bidderId is required when a manager creates an application", 422);
+      }
+
+      const bidderProfile = await prisma.bidderProfile.findUnique({
+        where: { id: body.bidderId },
+        select: { id: true, managerId: true, resumeUrl: true }
+      });
+
+      if (!bidderProfile || bidderProfile.managerId !== auth.user.id) {
+        return jsonError("Bidder not found or not assigned to you", 403);
+      }
+
+      const parsed = applicationCreateSchema.safeParse(body);
+      if (!parsed.success) {
+        return jsonError("Invalid application payload", 422, parsed.error.flatten());
+      }
+
+      const application = await prisma.application.create({
+        data: {
+          bidderId: bidderProfile.id,
+          jobTitle: parsed.data.jobTitle.trim(),
+          company: parsed.data.company.trim(),
+          jobUrl: parsed.data.jobUrl || null,
+          jobDescription: parsed.data.jobDescription.trim(),
+          resumeUrl: parsed.data.resumeUrl || bidderProfile.resumeUrl || null,
+          notes: parsed.data.notes?.trim() || null,
+          salaryMin: parsed.data.salaryMin,
+          salaryMax: parsed.data.salaryMax,
+          status: ApplicationStatus.submitted
+        }
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          userId: auth.user.id,
+          action: "application.created",
+          details: { applicationId: application.id, jobTitle: application.jobTitle, company: application.company, createdByManager: true }
+        }
+      });
+
+      publishEvent("application.created", { application }, { roles: [UserRole.admin], userIds: [auth.user.id, bidderProfile.id] });
+      return jsonOk(application, { status: 201 });
+    }
+
     if (auth.user.role !== UserRole.bidder) {
-      return jsonError("Only bidders can submit applications", 403);
+      return jsonError("Only bidders and managers can submit applications", 403);
     }
     if (!auth.user.bidder) {
       return jsonError("Bidder profile is missing", 400);
@@ -123,7 +173,6 @@ export async function POST(req: NextRequest) {
 
     const managerTemplateResumeUrl = auth.user.bidder.manager?.managerProfile?.templateResumeUrl ?? null;
 
-    const body = await req.json().catch(() => null);
     const parsed = applicationCreateSchema.safeParse(body);
 
     if (!parsed.success) {

@@ -9,6 +9,9 @@ import { adminResumeCreateSchema } from "@/lib/validators";
 import { extractResumeText } from "@/lib/resume-text";
 import { isRecoverableResumeSource, looksLikeResumeInstructionText } from "@/lib/resume/content-signals";
 import { saveResumeFile, validateResumeFile } from "@/lib/storage";
+import { buildCandidateProfileFromText, buildResumeRulesText, CANDIDATE_PROFILE_VERSION } from "@/lib/resume/candidate-profile";
+import { aiExtractCandidateProfile } from "@/lib/resume/ai-profile-extractor";
+import { toPrismaJson } from "@/lib/json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,53 +85,81 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const resume = await prisma.$transaction(async (tx) => {
-      const created = await tx.resume.create({
-        data: {
+    let candidateProfile: unknown = null;
+    let resumeRulesText: string | null = null;
+    let profileStatus = "converted";
+    try {
+      const aiProfile = await aiExtractCandidateProfile({ text: originalText });
+      if (aiProfile) {
+        candidateProfile = aiProfile;
+        resumeRulesText = buildResumeRulesText(aiProfile);
+      } else {
+        const converted = buildCandidateProfileFromText({
+          text: originalText,
+          fileType: file instanceof File ? file.type || "uploaded-file" : "text/plain"
+        });
+        candidateProfile = converted.profile;
+        resumeRulesText = buildResumeRulesText(converted.profile);
+      }
+    } catch (conversionError) {
+      console.warn("admin resume profile conversion failed; saving raw resume for converter review", conversionError);
+      profileStatus = "conversion_failed";
+    }
+
+    const resume = await prisma.resume.create({
+      data: {
+        managerId: manager.id,
+        createdById: auth.user.id,
+        title: parsed.data.title.trim(),
+        originalText,
+        candidateProfile: candidateProfile ? toPrismaJson(candidateProfile) : undefined,
+        resumeRulesText: resumeRulesText ?? undefined,
+        profileStatus,
+        convertedAt: candidateProfile ? new Date() : undefined,
+        converterVersion: candidateProfile ? CANDIDATE_PROFILE_VERSION : undefined,
+        fileUrl
+      },
+      select: {
+        id: true,
+        managerId: true,
+        title: true,
+        fileUrl: true,
+        candidateProfile: true,
+        resumeRulesText: true,
+        profileStatus: true,
+        convertedAt: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    await prisma.managerProfile.upsert({
+      where: { id: manager.id },
+      update: {
+        templateResumeUrl: fileUrl ?? manager.managerProfile?.templateResumeUrl ?? null,
+        templateResumeText: originalText
+      },
+      create: {
+        id: manager.id,
+        email: `${manager.username}@example.com`,
+        fullName: manager.username,
+        templateResumeUrl: fileUrl,
+        templateResumeText: originalText
+      }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: auth.user.id,
+        action: "resume.created",
+        details: {
+          resumeId: resume.id,
           managerId: manager.id,
-          createdById: auth.user.id,
-          title: parsed.data.title.trim(),
-          originalText,
-          fileUrl
-        },
-        select: {
-          id: true,
-          managerId: true,
-          title: true,
-          fileUrl: true,
-          createdAt: true,
-          updatedAt: true
+          title: resume.title
         }
-      });
-
-      await tx.managerProfile.upsert({
-        where: { id: manager.id },
-        update: {
-          templateResumeUrl: fileUrl ?? manager.managerProfile?.templateResumeUrl ?? null,
-          templateResumeText: originalText
-        },
-        create: {
-          id: manager.id,
-          email: `${manager.username}@example.com`,
-          fullName: manager.username,
-          templateResumeUrl: fileUrl,
-          templateResumeText: originalText
-        }
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: auth.user.id,
-          action: "resume.created",
-          details: {
-            resumeId: created.id,
-            managerId: manager.id,
-            title: created.title
-          }
-        }
-      });
-
-      return created;
+      }
+    }).catch((err) => {
+      console.warn("audit log failed (non-fatal)", err);
     });
 
     await createNotifications([manager.id], {
@@ -141,7 +172,14 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    return jsonOk({ resume }, { status: 201 });
+    return jsonOk({
+      resume: {
+        ...resume,
+        hasCandidateProfile: Boolean(resume.candidateProfile),
+        hasResumeRules: Boolean(resume.resumeRulesText),
+        textLength: originalText.length
+      }
+    }, { status: 201 });
   } catch (error) {
     console.error("admin resumes POST failed", error);
     return jsonError("Failed to create resume", 500);

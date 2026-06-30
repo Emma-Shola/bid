@@ -107,12 +107,44 @@ export interface NotificationItem {
   data?: unknown;
 }
 
+export interface TimeEntry {
+  id: string;
+  userId: string;
+  bidderName: string;
+  clockedInAt: string;
+  clockedOutAt?: string | null;
+  durationSecs?: number | null;
+  isActive: boolean;
+}
+
+export interface BidderClient {
+  managerId: string;
+  managerName: string;
+  isActive: boolean;
+}
+
+export interface ClockStatus {
+  isClockedIn: boolean;
+  activeEntry: { id: string; clockedInAt: string } | null;
+}
+
+export type ProfileStatus =
+  | "legacy"
+  | "converted"
+  | "auto_converted"
+  | "conversion_failed"
+  | "approved";
+
 export interface ResumeTemplate {
   id: string;
   managerId: string;
   managerName?: string | null;
   title: string;
   isUsableForGeneration?: boolean;
+  profileStatus?: ProfileStatus;
+  hasCandidateProfile?: boolean;
+  hasResumeRules?: boolean;
+  convertedAt?: string | null;
   fileUrl?: string | null;
   openUrl?: string | null;
   textLength: number;

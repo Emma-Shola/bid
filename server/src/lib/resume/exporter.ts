@@ -367,20 +367,20 @@ function buildContactLine(contact: ParsedResume["contact"]) {
     [
       contact?.email,
       contact?.phone,
+      contact?.linkedin,
       contact?.location
     ],
-    " | "
+    " · "
   );
 }
 
 function buildLinksLine(contact: ParsedResume["contact"]) {
   return compactJoin(
     [
-      contact?.linkedin,
       contact?.github,
       contact?.website
     ],
-    " | "
+    " · "
   );
 }
 

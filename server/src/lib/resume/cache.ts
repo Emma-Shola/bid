@@ -97,10 +97,12 @@ export function buildResumeGenerationFingerprint(input: {
   jobAnalysis: JobAnalysis;
   modelName?: string;
   promptVersion?: string;
+  resumeRulesText?: string;
 }) {
   const payload = normalizeForFingerprint({
     modelName: normalizeWhitespace(input.modelName || DEFAULT_RESUME_MODEL),
     promptVersion: normalizeWhitespace(input.promptVersion || RESUME_GENERATION_PROMPT_VERSION),
+    resumeRulesText: normalizeWhitespace(input.resumeRulesText || ""),
     source: input.source,
     jobAnalysis: input.jobAnalysis
   });

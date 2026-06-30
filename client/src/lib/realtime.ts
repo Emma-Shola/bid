@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NotificationItem } from "@/lib/types";
 
 export type WsStatus = "connecting" | "open" | "reconnecting" | "closed";
@@ -132,10 +132,15 @@ export function useWsStatus(): WsStatus {
 }
 
 export function useChannel<T = unknown>(type: string, onMessage: (data: T) => void) {
+  const callbackRef = useRef(onMessage);
+  useEffect(() => {
+    callbackRef.current = onMessage;
+  }, [onMessage]);
+
   useEffect(() => {
     start();
     const set = listeners.get(type) ?? new Set();
-    const wrapped: Listener = (payload) => onMessage(payload as T);
+    const wrapped: Listener = (payload) => callbackRef.current(payload as T);
     set.add(wrapped);
     listeners.set(type, set);
 
@@ -143,7 +148,7 @@ export function useChannel<T = unknown>(type: string, onMessage: (data: T) => vo
       set.delete(wrapped);
       if (set.size === 0) listeners.delete(type);
     };
-  }, [type, onMessage]);
+  }, [type]);
 }
 
 export function emitNotification(notification: NotificationItem) {
