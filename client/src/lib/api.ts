@@ -1158,6 +1158,7 @@ export const api = {
     jobTitle?: string;
     company?: string;
     jobDescription?: string;
+    structured?: { source: Record<string, unknown>; tailored: Record<string, unknown> };
   }): Promise<{
     answer: string;
     keyPoints: string[];

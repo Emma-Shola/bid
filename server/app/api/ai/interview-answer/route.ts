@@ -19,6 +19,12 @@ const InterviewRequestSchema = z
     jobTitle: z.string().trim().optional(),
     company: z.string().trim().optional(),
     jobDescription: z.string().trim().optional(),
+    structured: z
+      .object({
+        source: z.record(z.unknown()),
+        tailored: z.record(z.unknown()),
+      })
+      .optional(),
   })
   .strict();
 
@@ -145,6 +151,50 @@ function buildResumeContext(record: {
   return sections.join("\n\n");
 }
 
+function buildCandidateProfileContext(profile: unknown, resumeTitle: string) {
+  const record = asRecord(profile);
+  const personalInfo = asRecord(record.personalInfo);
+  const name = extractText(personalInfo.name ?? "");
+
+  const employmentHistory = Array.isArray(record.employmentHistory) ? record.employmentHistory : [];
+  const experience = employmentHistory
+    .map((entry, index) => {
+      const item = asRecord(entry);
+      const company = extractText(item.company ?? "");
+      const role = extractText(item.role ?? "");
+      const duration = extractText(item.duration ?? [item.startDate, item.endDate].filter(Boolean).join(" - "));
+      const heading = [`${index + 1}. ${role || "Role"}`, company ? `at ${company}` : "", duration ? `(${duration})` : ""]
+        .filter(Boolean)
+        .join(" ");
+      return heading;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const education = Array.isArray(record.education) ? record.education : [];
+  const educationText = education
+    .map((entry) => {
+      const item = asRecord(entry);
+      return [extractText(item.institution ?? ""), extractText(item.degree ?? ""), extractText(item.dates ?? "")]
+        .filter(Boolean)
+        .join(" | ");
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const certifications = stringList(record.certifications).join(", ");
+
+  const sections = [
+    `Resume title: ${resumeTitle}`,
+    name ? `Candidate name: ${name}` : "",
+    experience ? `Employment history:\n${experience}` : "",
+    educationText ? `Education:\n${educationText}` : "",
+    certifications ? `Certifications: ${certifications}` : "",
+  ].filter(Boolean);
+
+  return sections.join("\n\n");
+}
+
 function buildPrompt(input: {
   question: string;
   jobTitle: string;
@@ -157,19 +207,20 @@ function buildPrompt(input: {
     "Return strict JSON only and nothing else.",
     "Do not use markdown fences, code blocks, commentary, or preambles.",
     "Write in the candidate's voice using first person.",
-    "The answer should sound polished, confident, truthful, and recruiter-grade.",
+    "The answer must be precise and information-dense: every sentence adds a new fact, decision, or outcome. No throat-clearing, no restating the question, no filler transitions.",
     "Never invent employers, skills, projects, metrics, or responsibilities that are not supported by the resume context.",
     "If the question asks for something not directly evidenced, answer by leaning on adjacent truthful experience and transferable strengths rather than fabricating details.",
     "Use the job context to tailor the answer, but keep the response grounded in the candidate's resume.",
-    "Keep the answer concise and strong: about 120 to 180 words, or 2 to 4 short paragraphs.",
+    "Keep the answer short and sharp: 60 to 100 words in 1 tight paragraph. Lead with the direct answer in the first sentence.",
     "The answer should be appropriate for a live interview response, not a bullet list.",
-    "If the question is behavioral, structure the response like a brief STAR answer without labeling it.",
-    "If the question is technical, include concrete systems, decisions, scale, reliability, or performance details from the resume context when relevant.",
+    "If the question is behavioral, structure the response like a compressed STAR answer (situation/action/result in one flowing paragraph) without labeling it.",
+    "If the question is technical, name the single most relevant system, decision, or number from the resume context instead of listing several.",
+    "Cut every sentence that could be removed without losing a concrete fact.",
     "",
     "OUTPUT CONTRACT:",
-    "answer: a polished interview answer in first person",
-    "keyPoints: 3 to 5 short reminders the candidate can reuse while speaking",
-    "followUpQuestions: 2 to 4 likely follow-up questions the interviewer may ask",
+    "answer: a short, precise interview answer in first person (60-100 words)",
+    "keyPoints: exactly 2 to 3 short reminders the candidate can reuse while speaking",
+    "followUpQuestions: exactly 2 likely follow-up questions the interviewer may ask",
     "",
     `JOB TITLE: ${input.jobTitle || "N/A"}`,
     `COMPANY: ${input.company || "N/A"}`,
@@ -237,35 +288,24 @@ export async function POST(req: NextRequest) {
         })
       : null;
 
-    const latestGeneratedResume = await prisma.generatedResume.findFirst({
-      where: { bidderId: auth.user.id },
-      orderBy: { createdAt: "desc" },
-      select: {
-        outputText: true,
-        structuredJson: true,
-        resume: {
-          select: {
-            title: true,
-            originalText: true,
-          },
-        },
-      },
-    });
-
-    const fallbackResume = latestGeneratedResume
+    // Resume content is never persisted server-side, so the richest context is whatever
+    // job-specific structured resume the client already has in memory for this generation.
+    // Fall back to the bidder's manager's approved candidate profile when none is supplied.
+    const approvedResume = parsed.data.structured
       ? null
       : bidder.managerId
         ? await prisma.resume
             .findFirst({
               where: {
                 managerId: bidder.managerId,
+                profileStatus: "approved",
               },
               orderBy: {
                 updatedAt: "desc",
               },
               select: {
                 title: true,
-                originalText: true,
+                candidateProfile: true,
               },
             })
             .catch(() => null)
@@ -275,19 +315,18 @@ export async function POST(req: NextRequest) {
     const resolvedCompany = parsed.data.company || application?.company || "";
     const resolvedJobDescription = parsed.data.jobDescription || application?.jobDescription || "";
 
-    const resumeContext = latestGeneratedResume
+    const resumeContext = parsed.data.structured
       ? buildResumeContext({
-          outputText: latestGeneratedResume.outputText,
-          structuredJson: latestGeneratedResume.structuredJson,
-          resumeTitle:
-            latestGeneratedResume.resume?.title ||
-            `${bidder.manager?.managerProfile?.fullName || bidder.manager?.username || "Latest"} resume`,
+          outputText: null,
+          structuredJson: parsed.data.structured as unknown as Prisma.JsonValue,
+          resumeTitle: `${resolvedJobTitle || "Tailored"} resume`,
         })
-      : fallbackResume
-        ? [
-            `Resume title: ${fallbackResume.title}`,
-            `Resume text:\n${normalizeWhitespace(fallbackResume.originalText)}`,
-          ].join("\n\n")
+      : approvedResume?.candidateProfile
+        ? buildCandidateProfileContext(
+            approvedResume.candidateProfile,
+            approvedResume.title ||
+              `${bidder.manager?.managerProfile?.fullName || bidder.manager?.username || "Latest"} resume`,
+          )
         : "";
 
     if (!resumeContext.trim()) {
@@ -304,9 +343,9 @@ export async function POST(req: NextRequest) {
 
     const response = await openai.responses.create({
       model: process.env.OPENAI_INTERVIEW_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      temperature: 0.3,
+      temperature: 0.2,
       instructions:
-        "You are a professional interview coach for senior software engineers. Return only strict JSON that matches the schema exactly. Keep the answer truthful, concise, polished, and grounded in the candidate's resume and job context.",
+        "You are a professional interview coach for senior software engineers. Return only strict JSON that matches the schema exactly. Answers must be short, precise, and truthful — every sentence carries a concrete fact grounded in the candidate's resume and job context. No filler, no restating the question.",
       input: buildPrompt({
         question: parsed.data.question,
         jobTitle: resolvedJobTitle,

@@ -1433,6 +1433,9 @@ export default function ResumeQueueStudio() {
                         jobTitle: getJobTitle(job),
                         company: getJobCompany(job),
                         jobDescription: getJobDescription(job),
+                        structured: structuredResult
+                          ? (structuredResult as unknown as { source: Record<string, unknown>; tailored: Record<string, unknown> })
+                          : undefined,
                       });
                       setQaByJobId((current) => ({
                         ...current,
