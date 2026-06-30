@@ -13,7 +13,7 @@ const redis =
     : null;
 
 export async function GET() {
-  const checks = {
+  const checks: { database: string; redis: string; databaseError?: string; redisError?: string } = {
     database: "unknown",
     redis: redis ? "unknown" : "not_configured"
   };
@@ -23,6 +23,8 @@ export async function GET() {
     checks.database = "ok";
   } catch (error) {
     checks.database = "error";
+    checks.databaseError = error instanceof Error ? error.message : String(error);
+    console.error("[health] database check failed", error);
   }
 
   if (redis) {
@@ -31,6 +33,8 @@ export async function GET() {
       checks.redis = "ok";
     } catch (error) {
       checks.redis = "error";
+      checks.redisError = error instanceof Error ? error.message : String(error);
+      console.error("[health] redis check failed", error);
     }
   }
 
