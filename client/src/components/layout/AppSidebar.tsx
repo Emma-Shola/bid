@@ -155,18 +155,21 @@ function ClockWidget() {
   const queryClient = useQueryClient();
   const [elapsed, setElapsed] = useState(0);
 
-  const { data: status } = useQuery({
+  const { data: status, isFetched } = useQuery({
     queryKey: ["clock-status"],
     queryFn: api.clockStatus,
     refetchOnMount: "always",
     retry: false,
+    staleTime: 0,
   });
 
-  // Single effect: recompute elapsed from clockedInAt on every tick
+  // Derive clockedInAt only once the server response has landed.
+  // While still loading (isFetched=false) keep whatever elapsed was —
+  // avoids a 00:00:00 flash on page load/refresh while the fetch is in flight.
   const clockedInAt = status?.isClockedIn ? status.activeEntry?.clockedInAt : null;
   useEffect(() => {
     if (!clockedInAt) {
-      setElapsed(0);
+      if (isFetched) setElapsed(0); // only reset once we KNOW the user isn't clocked in
       return;
     }
     const start = new Date(clockedInAt).getTime();
@@ -176,7 +179,7 @@ function ClockWidget() {
       1000
     );
     return () => clearInterval(id);
-  }, [clockedInAt]);
+  }, [clockedInAt, isFetched]);
 
   const clockIn = useMutation({
     mutationFn: api.clockIn,
