@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
         ? await buildResumeDocxBuffer({ source, tailored })
         : await buildResumePdfBuffer({ source, tailored });
 
-    const fileBase = sanitizeFileName([jobTitle, company, format].filter(Boolean).join("-"));
+    const fileBase = sanitizeFileName(company || jobTitle);
     const contentType =
       format === "docx"
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

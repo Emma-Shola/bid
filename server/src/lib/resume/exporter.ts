@@ -399,9 +399,16 @@ export function buildResumeExportModel(input: {
   const candidateName = normalizeWhitespace(source.name) || "Candidate";
   const experience = normalizeExportExperience(source.experience, tailored, candidateName);
 
+  // Align the most recent role title with the target job title (stored in source.title
+  // by candidateProfileToParsedResume) so the resume reads as built for this specific role.
+  const targetTitle = normalizeWhitespace(source.title);
+  if (experience.length > 0 && targetTitle) {
+    experience[0] = { ...experience[0], role: targetTitle };
+  }
+
   return {
     name: candidateName,
-    title: normalizeWhitespace(source.title),
+    title: targetTitle,
     contactLine: buildContactLine({
       ...source.contact,
       location: cleanContactLocation(source.contact?.location || "")

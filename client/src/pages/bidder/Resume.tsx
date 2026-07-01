@@ -245,10 +245,8 @@ function buildSearchText(job: QueueViewJob) {
 }
 
 function getFileNameFromJob(job: QueueViewJob) {
-  const title = sanitizeResumeFileName(getJobTitle(job));
   const company = sanitizeResumeFileName(getJobCompany(job));
-  const stamp = new Date(job.createdAt).toISOString().slice(0, 10);
-  return `${title}_${company}_${stamp}.pdf`;
+  return `${company || "resume"}.pdf`;
 }
 
 function getDefaultQuestionForJob(job: QueueViewJob) {
