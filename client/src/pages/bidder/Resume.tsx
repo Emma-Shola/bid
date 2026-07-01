@@ -363,7 +363,34 @@ export default function ResumeQueueStudio() {
   const [pendingGenerationRows, setPendingGenerationRows] = useState<QueueViewJob[]>([]);
   const [jobDeliveryStates, setJobDeliveryStates] = useState<Record<string, DeliveryState>>({});
   const autoSaveStateRef = useRef(new Map<string, "saving" | "saved" | "downloaded" | "failed">());
+  const structuredCacheRef = useRef(new Map<string, GeneratedResumeStructured>());
   const draftStorageKey = user?.id ? `topbrass:bidder:queue-generator:${user.id}` : null;
+  const structuredCacheKey = user?.id ? `topbrass:bidder:job-structured:${user.id}` : null;
+
+  // Load persisted structured cache from localStorage on mount
+  useEffect(() => {
+    if (!structuredCacheKey) return;
+    try {
+      const raw = localStorage.getItem(structuredCacheKey);
+      if (raw) {
+        const parsed: Record<string, GeneratedResumeStructured> = JSON.parse(raw);
+        structuredCacheRef.current = new Map(Object.entries(parsed));
+      }
+    } catch { /* ignore corrupt cache */ }
+  }, [structuredCacheKey]);
+
+  function persistStructured(jobId: string, data: GeneratedResumeStructured) {
+    structuredCacheRef.current.set(jobId, data);
+    if (!structuredCacheKey) return;
+    try {
+      const entries = [...structuredCacheRef.current.entries()].slice(-50); // keep last 50
+      localStorage.setItem(structuredCacheKey, JSON.stringify(Object.fromEntries(entries)));
+    } catch { /* ignore quota errors */ }
+  }
+
+  function getStructuredForJob(job: BackgroundJob): GeneratedResumeStructured | null {
+    return getJobStructured(job) ?? structuredCacheRef.current.get(job.id) ?? null;
+  }
 
   const { data: resumeTemplates = [] } = useQuery({
     queryKey: ["resumes", "bidder"],
@@ -854,7 +881,8 @@ export default function ResumeQueueStudio() {
       }
 
       log("requesting PDF from stateless export endpoint");
-      const structured = content.structured as { source: Record<string, unknown>; tailored: Record<string, unknown> };
+      const structured = content.structured as GeneratedResumeStructured;
+      if (targetJobId) persistStructured(targetJobId, structured);
       const { blob, fileName } = await api.exportResumeToBlob({
         structured,
         jobTitle: content.jobTitle ?? jobTitle,
@@ -1062,6 +1090,9 @@ export default function ResumeQueueStudio() {
         };
         setCurrentGeneration(nextGenerationState);
 
+        if (wsContent?.structured) {
+          persistStructured(event.data.job.id, wsContent.structured as GeneratedResumeStructured);
+        }
         void autoSaveGeneratedResume(event.data.job.id, event.data.job.status, {
           structured: wsContent?.structured,
           jobTitle,
@@ -1152,9 +1183,9 @@ export default function ResumeQueueStudio() {
   }
 
   async function manualDownload(job: QueueViewJob, format: "pdf" | "docx" = "pdf") {
-    const structured = getJobStructured(job);
+    const structured = getStructuredForJob(job);
     if (!structured) {
-      toast.error("This resume was saved to your PC when generated. To get it again, regenerate using the same job details.");
+      toast.error("Resume data not available — please regenerate this resume to download it again.");
       return;
     }
 
@@ -1264,15 +1295,15 @@ export default function ResumeQueueStudio() {
             <div className="flex items-center gap-1 xl:justify-end">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="icon" variant="outline" className="h-8 w-8 rounded-md" disabled={!generatedResumeId}>
+                  <Button size="icon" variant="outline" className="h-8 w-8 rounded-md" disabled={!getStructuredForJob(job)}>
                     <Download className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem disabled={!generatedResumeId} onClick={() => void manualDownload(job, "pdf")}>
+                  <DropdownMenuItem disabled={!getStructuredForJob(job)} onClick={() => void manualDownload(job, "pdf")}>
                     Download PDF
                   </DropdownMenuItem>
-                  <DropdownMenuItem disabled={!generatedResumeId} onClick={() => void manualDownload(job, "docx")}>
+                  <DropdownMenuItem disabled={!getStructuredForJob(job)} onClick={() => void manualDownload(job, "docx")}>
                     Download DOCX
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -1465,7 +1496,20 @@ export default function ResumeQueueStudio() {
 
                 {qaState.answer ? (
                   <div className="rounded-xl border border-border/70 bg-background p-4">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Answer</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Answer</p>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          navigator.clipboard.writeText(qaState.answer).then(() => toast.success("Answer copied")).catch(() => toast.error("Could not copy"));
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                        Copy
+                      </Button>
+                    </div>
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{qaState.answer}</p>
                     {qaState.keyPoints.length > 0 ? (
                       <div className="mt-3">
@@ -1822,7 +1866,7 @@ export default function ResumeQueueStudio() {
             {selectedPreviewJob ? (
               <ResumeDocumentPreview
                 content={normalizeGeneratedResumePreview(getJobPreview(selectedPreviewJob), "")}
-                structured={getJobStructured(selectedPreviewJob)}
+                structured={getStructuredForJob(selectedPreviewJob)}
               />
             ) : null}
           </div>
