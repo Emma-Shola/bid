@@ -85,15 +85,33 @@ export default function ResumeSetup() {
     }
   }, [resumeTemplates, selectedResumeId]);
 
+  // Auto-create today's session if workspace state was lost (e.g. new device / cleared storage)
+  useEffect(() => {
+    if (!user?.id || sessionWorkspaceId) return;
+    const { store: next, workspace: ws } = createOrSelectWorkspace(queueStore, todayLabel());
+    saveBidderQueueStore(user.id, next);
+    setQueueStore(next);
+    setSessionWorkspaceId(ws.id);
+    setSessionName(ws.name);
+  }, [user?.id, sessionWorkspaceId, queueStore]);
+
+  // Once all three conditions are met after async data loads, go straight to the queue
+  const templatesLoaded = resumeTemplates.length > 0;
+  useEffect(() => {
+    if (selectedResumeId && sessionWorkspaceId && downloadFolderName && templatesLoaded) {
+      navigate("/bidder/resume/queue", {
+        state: { resumeId: selectedResumeId, workspaceId: sessionWorkspaceId },
+        replace: true,
+      });
+    }
+  }, [selectedResumeId, sessionWorkspaceId, downloadFolderName, templatesLoaded, navigate]);
+
   function handleCreateSession() {
     if (!user?.id) return;
     const name = sessionName.trim() || todayLabel();
-    const next = createOrSelectWorkspace(queueStore, name);
-    const ws = next.workspaces.find((w) => w.name === name) ?? next.workspaces[next.workspaces.length - 1];
-    if (!ws) return;
-    const withActive = setActiveWorkspace(next, ws.id);
-    saveBidderQueueStore(user.id, withActive);
-    setQueueStore(withActive);
+    const { store: next, workspace: ws } = createOrSelectWorkspace(queueStore, name);
+    saveBidderQueueStore(user.id, next);
+    setQueueStore(next);
     setSessionWorkspaceId(ws.id);
     toast.success(`Session "${ws.name}" ready`);
   }
