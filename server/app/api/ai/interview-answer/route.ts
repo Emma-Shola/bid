@@ -25,6 +25,8 @@ const InterviewRequestSchema = z
         tailored: z.record(z.unknown()),
       })
       .optional(),
+    refineInstruction: z.string().trim().min(1).max(300).optional(),
+    previousAnswer: z.string().trim().min(1).max(4000).optional(),
   })
   .strict();
 
@@ -195,15 +197,60 @@ function buildCandidateProfileContext(profile: unknown, resumeTitle: string) {
   return sections.join("\n\n");
 }
 
+const HUMANIZATION_RULES = [
+  "Write the way a real candidate actually talks out loud in an interview, not the way an AI writes a blog post or cover letter.",
+  "Never use these AI-tell words or phrases, in any form: delve, leverage, utilize, robust, seamless, seamlessly, showcase, harness, cutting-edge, synergy, foster, elevate, unlock, dive into, in today's fast-paced, furthermore, moreover, additionally, it's worth noting, in conclusion, I am passionate about, I am excited to, at the end of the day, game-changer, streamline.",
+  "Use contractions naturally where a person would say them out loud: I've, I'm, didn't, wasn't, that's, it's.",
+  "Vary sentence length on purpose. Do not make every sentence the same length or shape — a short sentence right after a longer one is what real speech sounds like.",
+  "Do not use a tidy three-item list or perfectly parallel phrasing ('not only... but also', 'X, Y, and Z' triads) — that rhythm is a dead giveaway of AI writing.",
+  "Never use em dashes. Use a comma or a period instead.",
+  "Lead with something specific and concrete — a real system, a real number, a real decision — fast. Generic language is the single biggest AI tell, not sentence structure.",
+].join("\n");
+
 function buildPrompt(input: {
   question: string;
   jobTitle: string;
   company: string;
   jobDescription: string;
   resumeContext: string;
+  refineInstruction?: string;
+  previousAnswer?: string;
 }) {
+  if (input.refineInstruction && input.previousAnswer) {
+    return [
+      HUMANIZATION_RULES,
+      "",
+      "You are revising a previous interview answer for the same question — you are not writing a new answer from scratch.",
+      "Return strict JSON only and nothing else. Do not use markdown fences, code blocks, commentary, or preambles.",
+      "Keep everything from the previous answer that already works. Only change what the candidate's instruction below asks you to change.",
+      "Stay grounded in the same resume and job context as the previous answer — never introduce a new employer, skill, project, or metric that isn't supported by the resume context.",
+      "Keep it in first person, spoken-interview register, not written prose.",
+      "",
+      "OUTPUT CONTRACT:",
+      "answer: the revised interview answer in first person",
+      "keyPoints: exactly 2 to 3 short reminders the candidate can reuse while speaking",
+      "followUpQuestions: exactly 2 likely follow-up questions the interviewer may ask",
+      "",
+      `JOB TITLE: ${input.jobTitle || "N/A"}`,
+      `COMPANY: ${input.company || "N/A"}`,
+      "",
+      "RESUME CONTEXT:",
+      input.resumeContext || "N/A",
+      "",
+      "ORIGINAL QUESTION:",
+      input.question,
+      "",
+      "PREVIOUS ANSWER:",
+      input.previousAnswer,
+      "",
+      "CANDIDATE'S REVISION INSTRUCTION:",
+      input.refineInstruction,
+    ].join("\n");
+  }
+
   return [
     "You are an elite interview coach for senior software engineering candidates.",
+    HUMANIZATION_RULES,
     "Return strict JSON only and nothing else.",
     "Do not use markdown fences, code blocks, commentary, or preambles.",
     "Write in the candidate's voice using first person.",
@@ -343,15 +390,17 @@ export async function POST(req: NextRequest) {
 
     const response = await openai.responses.create({
       model: process.env.OPENAI_INTERVIEW_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      temperature: 0.2,
+      temperature: 0.45,
       instructions:
-        "You are a professional interview coach for senior software engineers. Return only strict JSON that matches the schema exactly. Answers must be short, precise, and truthful — every sentence carries a concrete fact grounded in the candidate's resume and job context. No filler, no restating the question.",
+        "You are a professional interview coach for senior software engineers. Return only strict JSON that matches the schema exactly. Answers must sound like a real person talking in an interview, not AI-generated text — short, precise, truthful, with natural varied sentence rhythm and contractions. Every sentence carries a concrete fact grounded in the candidate's resume and job context. No filler, no restating the question, no em dashes, no AI-cliché phrasing.",
       input: buildPrompt({
         question: parsed.data.question,
         jobTitle: resolvedJobTitle,
         company: resolvedCompany,
         jobDescription: resolvedJobDescription,
         resumeContext,
+        refineInstruction: parsed.data.refineInstruction,
+        previousAnswer: parsed.data.previousAnswer,
       }),
       text: {
         format: zodTextFormat(InterviewAnswerSchema, "interview_answer"),
@@ -368,12 +417,13 @@ export async function POST(req: NextRequest) {
     await prisma.auditLog.create({
       data: {
         userId: auth.user.id,
-        action: "interview.answer.generated",
+        action: parsed.data.refineInstruction ? "interview.answer.refined" : "interview.answer.generated",
         details: {
           question: parsed.data.question,
           applicationId: parsed.data.applicationId ?? null,
           jobTitle: resolvedJobTitle || null,
           company: resolvedCompany || null,
+          refineInstruction: parsed.data.refineInstruction ?? null,
         },
       },
     }).catch(() => null);

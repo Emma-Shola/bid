@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Copy, ExternalLink, Sparkles, WandSparkles } from "lucide-react";
+import { Copy, ExternalLink, Sparkles, Wand2, WandSparkles } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -16,6 +16,13 @@ const quickPrompts = [
   "How do you balance speed and reliability?",
   "Why are you the right fit for this team?",
   "Describe a project you led end to end.",
+];
+
+const refinePrompts = [
+  "Make it shorter",
+  "More casual",
+  "More confident",
+  "Add more technical detail",
 ];
 
 export default function InterviewCoach() {
@@ -36,10 +43,12 @@ export default function InterviewCoach() {
   const [company, setCompany] = useState(initialCompany);
   const [jobDescription, setJobDescription] = useState(initialJobDescription);
   const [question, setQuestion] = useState("Why do you feel interested in this role?");
+  const [lastAskedQuestion, setLastAskedQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [keyPoints, setKeyPoints] = useState<string[]>([]);
   const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
   const [isCopied, setIsCopied] = useState(false);
+  const [refineInstruction, setRefineInstruction] = useState("");
 
   const hasContext = useMemo(
     () => Boolean(applicationId || jobTitle.trim() || company.trim() || jobDescription.trim()),
@@ -61,9 +70,11 @@ export default function InterviewCoach() {
     setCompany(initialCompany);
     setJobDescription(initialJobDescription);
     setQuestion(quickPrompts[0]);
+    setLastAskedQuestion("");
     setAnswer("");
     setKeyPoints([]);
     setFollowUpQuestions([]);
+    setRefineInstruction("");
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -73,24 +84,30 @@ export default function InterviewCoach() {
   }, [isCopied]);
 
   const ask = useMutation({
-    mutationFn: () =>
+    mutationFn: (variables: { question: string; refineInstruction?: string; previousAnswer?: string }) =>
       api.askInterviewQuestion({
-        question: question.trim(),
+        question: variables.question,
         applicationId: applicationId || undefined,
         jobTitle: jobTitle.trim() || undefined,
         company: company.trim() || undefined,
         jobDescription: jobDescription.trim() || undefined,
+        refineInstruction: variables.refineInstruction,
+        previousAnswer: variables.previousAnswer,
       }),
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       setAnswer(result.answer);
       setKeyPoints(result.keyPoints || []);
       setFollowUpQuestions(result.followUpQuestions || []);
-      toast.success("Answer ready");
+      setLastAskedQuestion(variables.question);
+      toast.success(variables.refineInstruction ? "Answer refined" : "Answer ready");
     },
     onError: (error) => {
       toast.error((error as Error).message || "Failed to generate answer");
     },
   });
+
+  const isRefining = ask.isPending && Boolean(ask.variables?.refineInstruction);
+  const isAsking = ask.isPending && !isRefining;
 
   async function handleCopy() {
     if (!answer.trim()) return;
@@ -110,8 +127,24 @@ export default function InterviewCoach() {
       return;
     }
 
-    ask.mutate();
+    ask.mutate({ question: question.trim() });
     setQuestion("");
+  }
+
+  function handleRefine(instruction?: string) {
+    const text = (instruction ?? refineInstruction).trim();
+    if (!text) {
+      toast.error("Tell the coach what to change first.");
+      return;
+    }
+
+    if (!answer.trim() || !lastAskedQuestion.trim()) {
+      toast.error("Ask a question first before refining the answer.");
+      return;
+    }
+
+    ask.mutate({ question: lastAskedQuestion, refineInstruction: text, previousAnswer: answer });
+    setRefineInstruction("");
   }
 
   return (
@@ -242,7 +275,7 @@ export default function InterviewCoach() {
 
               <Button className="w-full" onClick={handleAsk} disabled={ask.isPending}>
                 <Sparkles className="mr-1.5 h-4 w-4" />
-                {ask.isPending ? "Thinking..." : "Ask AI"}
+                {isAsking ? "Thinking..." : "Ask AI"}
               </Button>
             </div>
           </div>
@@ -265,6 +298,49 @@ export default function InterviewCoach() {
               <div className="space-y-4">
                 <div className="rounded-lg border border-border/80 bg-muted/25 p-4">
                   <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">{answer}</p>
+                </div>
+
+                <div className="rounded-lg border border-dashed border-border/70 bg-background p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <Wand2 className="h-3.5 w-3.5" />
+                    Refine this answer
+                  </div>
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {refinePrompts.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => handleRefine(prompt)}
+                        disabled={ask.isPending}
+                        className="rounded-full border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground disabled:opacity-50"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={refineInstruction}
+                      onChange={(event) => setRefineInstruction(event.target.value)}
+                      placeholder="Or type your own tweak..."
+                      className="h-8 text-xs"
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          handleRefine();
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 shrink-0"
+                      onClick={() => handleRefine()}
+                      disabled={ask.isPending || !refineInstruction.trim()}
+                    >
+                      {isRefining ? "Refining..." : "Refine"}
+                    </Button>
+                  </div>
                 </div>
 
                 {keyPoints.length > 0 && (
