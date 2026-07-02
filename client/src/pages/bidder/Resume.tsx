@@ -656,6 +656,7 @@ export default function ResumeQueueStudio() {
         jobTitle?: string;
         company?: string;
         jobDescription?: string;
+        jobUrl?: string;
         workspaceId?: string | null;
       },
     ) => {
@@ -663,6 +664,7 @@ export default function ResumeQueueStudio() {
       const jobTitleValue = variables?.jobTitle ?? jobTitle;
       const companyValue = variables?.company ?? company;
       const jobDescriptionValue = variables?.jobDescription ?? jobDescription;
+      const jobUrlValue = variables?.jobUrl ?? jobUrl;
 
       const resumeTemplate = resumeTemplates.find((template) => template.id === resumeId);
       if (!resumeTemplate) {
@@ -672,7 +674,7 @@ export default function ResumeQueueStudio() {
         resumeId,
         jobTitle: jobTitleValue,
         company: companyValue,
-        jobUrl: jobUrl.trim() || undefined,
+        jobUrl: jobUrlValue.trim() || undefined,
         jobDescription: jobDescriptionValue,
         preferInline: false,
       });
@@ -685,6 +687,8 @@ export default function ResumeQueueStudio() {
         "Unsorted";
       const jobTitleValue = variables?.jobTitle ?? jobTitle;
       const companyValue = variables?.company ?? company;
+      const jobDescriptionValue = variables?.jobDescription ?? jobDescription;
+      const resumeIdValue = variables?.resumeId ?? selectedResumeId;
       const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const createdAt = new Date().toISOString();
       setCurrentGeneration({
@@ -712,8 +716,8 @@ export default function ResumeQueueStudio() {
           payload: {
             jobTitle: jobTitleValue.trim(),
             company: companyValue.trim(),
-            jobDescription: jobDescription.trim(),
-            resumeId: selectedResumeId,
+            jobDescription: jobDescriptionValue.trim(),
+            resumeId: resumeIdValue,
           },
           workspaceId,
           workspaceName,
@@ -1160,7 +1164,14 @@ export default function ResumeQueueStudio() {
       return false;
     }
 
-    gen.mutate({ workspaceId: activeWorkspace?.id ?? null });
+    gen.mutate({
+      resumeId: selectedResumeId,
+      jobTitle,
+      company,
+      jobDescription,
+      jobUrl,
+      workspaceId: activeWorkspace?.id ?? null,
+    });
     setJobTitle("");
     setCompany("");
     setJobUrl("");
