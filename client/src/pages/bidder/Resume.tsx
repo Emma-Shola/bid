@@ -1161,6 +1161,10 @@ export default function ResumeQueueStudio() {
     }
 
     gen.mutate({ workspaceId: activeWorkspace?.id ?? null });
+    setJobTitle("");
+    setCompany("");
+    setJobUrl("");
+    setJobDescription("");
     return true;
   }
 
