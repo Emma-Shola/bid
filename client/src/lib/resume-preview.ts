@@ -220,8 +220,19 @@ function groupSkillsByClassification(skills: string[]): ResumePreviewSkillCatego
   const groups = new Map<string, string[]>();
   const used = new Set<string>();
 
-  for (const skill of skills) {
-    pushSkill(groups, used, classifySkill(skill), skill);
+  for (const raw of skills) {
+    // The model is prompted to emit tailoredSkills as "Category: skill, skill"
+    // lines. Split that label back out first, otherwise the whole line gets
+    // classified and stored as a single skill under its own category, e.g.
+    // "Languages: Languages: Python, TypeScript, SQL".
+    const parsedLine = parseSkillLine(raw);
+    if (parsedLine) {
+      for (const skill of parsedLine.skills) {
+        pushSkill(groups, used, parsedLine.category, skill);
+      }
+      continue;
+    }
+    pushSkill(groups, used, classifySkill(raw), raw);
   }
 
   return SKILL_CATEGORY_ORDER.filter((category) => groups.has(category)).map((category) => ({
