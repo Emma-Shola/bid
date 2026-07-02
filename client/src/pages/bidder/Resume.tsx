@@ -1458,7 +1458,7 @@ export default function ResumeQueueStudio() {
                     if (!question) return;
                     setQaByJobId((current) => ({
                       ...current,
-                      [job.id]: { ...qaState, loading: true },
+                      [job.id]: { ...qaState, question: "", loading: true },
                     }));
                     try {
                       const result = await api.askInterviewQuestion({
@@ -1473,7 +1473,7 @@ export default function ResumeQueueStudio() {
                       setQaByJobId((current) => ({
                         ...current,
                         [job.id]: {
-                          question,
+                          question: "",
                           answer: result.answer,
                           keyPoints: result.keyPoints ?? [],
                           followUps: result.followUpQuestions ?? [],
@@ -1485,6 +1485,7 @@ export default function ResumeQueueStudio() {
                         ...current,
                         [job.id]: {
                           ...qaState,
+                          question: "",
                           loading: false,
                         },
                       }));

@@ -53,6 +53,19 @@ export default function InterviewCoach() {
     setJobDescription((current) => current.trim() ? current : application.jobDescription || "");
   }, [application]);
 
+  // Reset the whole session whenever the coach is opened for a different
+  // resume/job (new URL params) — otherwise this route stays mounted and the
+  // previous resume's question/answer bleeds into the next one.
+  useEffect(() => {
+    setJobTitle(initialJobTitle);
+    setCompany(initialCompany);
+    setJobDescription(initialJobDescription);
+    setQuestion(quickPrompts[0]);
+    setAnswer("");
+    setKeyPoints([]);
+    setFollowUpQuestions([]);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!isCopied) return;
     const timer = window.setTimeout(() => setIsCopied(false), 1800);
@@ -98,6 +111,7 @@ export default function InterviewCoach() {
     }
 
     ask.mutate();
+    setQuestion("");
   }
 
   return (
