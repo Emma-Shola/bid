@@ -808,8 +808,8 @@ export default function ResumeQueueStudio() {
       if (result.status === "completed" || result.status === "qa_required") {
         await autoSaveGeneratedResume(result.jobId, result.status, {
           structured: result.structured,
-          jobTitle: jobTitle,
-          company: company,
+          jobTitle: jobTitleValue,
+          company: companyValue,
         });
       }
     },
@@ -1082,10 +1082,18 @@ export default function ResumeQueueStudio() {
         );
         if (preview) setOutput(preview);
 
+        // The live jobTitle/company form fields may have already been cleared
+        // (or repopulated for a different job) by the time this event arrives,
+        // especially for slower queued generations — so source the title and
+        // company from the job's own payload instead of current form state.
+        const sourceJob = [...pendingGenerationRows, ...jobs].find((job) => job.id === event.data.job.id);
+        const eventJobTitle = sourceJob ? getJobTitle(sourceJob) : jobTitle;
+        const eventJobCompany = sourceJob ? getJobCompany(sourceJob) : company;
+
         const nextGenerationState: CurrentGenerationState = {
           jobId: event.data.job.id,
-          jobTitle,
-          company,
+          jobTitle: eventJobTitle,
+          company: eventJobCompany,
           workspaceId: activeWorkspace?.id ?? null,
           workspaceName: activeWorkspace?.name ?? "Unsorted",
           folderName: downloadFolderName,
@@ -1100,8 +1108,8 @@ export default function ResumeQueueStudio() {
         }
         void autoSaveGeneratedResume(event.data.job.id, event.data.job.status, {
           structured: wsContent?.structured,
-          jobTitle,
-          company,
+          jobTitle: eventJobTitle,
+          company: eventJobCompany,
         });
       }
       if (event.data.job.status === "failed" || event.data.job.status === "dead_letter") {
