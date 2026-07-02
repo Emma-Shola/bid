@@ -235,7 +235,14 @@ function groupSkillsByClassification(skills: string[]): ResumePreviewSkillCatego
     pushSkill(groups, used, classifySkill(raw), raw);
   }
 
-  return SKILL_CATEGORY_ORDER.filter((category) => groups.has(category)).map((category) => ({
+  // Known categories render first in a fixed, professional order; anything the
+  // model labeled with a category outside that fixed list (e.g. "Testing",
+  // "Version Control") still renders instead of being silently dropped —
+  // it's appended in the order it was first seen.
+  const known = SKILL_CATEGORY_ORDER.filter((category) => groups.has(category));
+  const unknown = Array.from(groups.keys()).filter((category) => !SKILL_CATEGORY_ORDER.includes(category));
+
+  return [...known, ...unknown].map((category) => ({
     category,
     skills: groups.get(category) ?? []
   }));
@@ -391,7 +398,12 @@ export function buildResumePreviewModel(structured: GeneratedResumeStructured): 
   const candidateName = normalizeText(source.name) || "Candidate";
   const tailoredSkills = normalizeList(tailored.tailoredSkills);
   const classifiedCategories = groupSkillsByClassification(tailoredSkills);
-  const skillCategories = buildSkillCategories(classifiedCategories, tailoredSkills);
+  // Use the already-split individual skill names (not the raw "Category: a, b"
+  // lines) as the priority/leftover source, otherwise buildSkillCategories can
+  // never match a raw line against an already-placed skill and dumps every
+  // line, verbatim, into a redundant "Additional Relevant Skills" bucket.
+  const flattenedSkills = Array.from(new Set(classifiedCategories.flatMap((category) => category.skills)));
+  const skillCategories = buildSkillCategories(classifiedCategories, flattenedSkills);
 
   return {
     name: candidateName,
