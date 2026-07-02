@@ -1249,6 +1249,26 @@ export const api = {
     return { blob, fileName, contentType: response.headers.get("content-type") || blob.type };
   },
 
+  async fetchGeneratedResumeBlob(
+    generatedResumeId: string,
+    format: "pdf" | "docx" = "pdf",
+  ): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+    const response = await requestBlob(`/api/generated-resumes/${generatedResumeId}/export?format=${format}`);
+
+    if (!response.ok) {
+      const rawBody = await response.text().catch(() => "");
+      let message = rawBody;
+      try { const p = JSON.parse(rawBody) as { error?: string }; if (p?.error) message = p.error; } catch { /* noop */ }
+      throw new Error(message || `Failed to export resume (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const cd = response.headers.get("content-disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/i);
+    const fileName = match?.[1] || `resume.${format}`;
+    return { blob, fileName, contentType: response.headers.get("content-type") || blob.type };
+  },
+
   async bidderClients(): Promise<import("./types").BidderClient[]> {
     return request("/api/bidder/clients");
   },

@@ -463,19 +463,6 @@ export default function ResumeQueueStudio() {
   }, [queueStore.activeWorkspaceId, queueStore.workspaces]);
 
   useEffect(() => {
-    if (!user?.id || !jobs.length || !queueStore.activeWorkspaceId) return;
-    const unassigned = jobs.filter((job) => job.kind === "resume_generate" && !queueStore.jobWorkspaceMap[job.id]);
-    if (!unassigned.length) return;
-    setQueueStore((current) => {
-      let next = current;
-      for (const job of unassigned) {
-        next = assignJobToWorkspace(next, job.id, current.activeWorkspaceId ?? queueStore.activeWorkspaceId!);
-      }
-      return next;
-    });
-  }, [jobs, queueStore.activeWorkspaceId, queueStore.jobWorkspaceMap, user?.id]);
-
-  useEffect(() => {
     if (!selectedWorkspaceId && queueStore.workspaces[0]) {
       setSelectedWorkspaceId(queueStore.workspaces[0].id);
     }
@@ -877,24 +864,40 @@ export default function ResumeQueueStudio() {
     });
 
     try {
-      if (!content.structured || typeof content.structured !== "object" ||
-          !("source" in (content.structured as object)) || !("tailored" in (content.structured as object))) {
-        throw new Error("Resume content not available — please regenerate this resume.");
+      const fallbackJob = queueJobs.find((job) => job.id === targetJobId);
+      const hasStructured =
+        content.structured && typeof content.structured === "object" &&
+        "source" in (content.structured as object) && "tailored" in (content.structured as object);
+
+      let blob: Blob;
+      let fileName: string;
+
+      if (hasStructured) {
+        log("requesting PDF from stateless export endpoint");
+        const structured = content.structured as GeneratedResumeStructured;
+        if (targetJobId) persistStructured(targetJobId, structured);
+        ({ blob, fileName } = await api.exportResumeToBlob({
+          structured,
+          jobTitle: content.jobTitle ?? jobTitle,
+          company: content.company ?? company,
+          format: "pdf",
+        }));
+      } else {
+        // The realtime-delivered content was missed (refresh, dropped
+        // websocket event, etc). Fall back to the server-persisted copy
+        // instead of failing outright — same endpoint the single-application
+        // page already relies on.
+        const generatedResumeId = fallbackJob ? getGeneratedResumeId(fallbackJob) : "";
+        if (!generatedResumeId) {
+          throw new Error("Resume content not available — please regenerate this resume.");
+        }
+        log("stateless content missing, falling back to persisted export endpoint");
+        ({ blob, fileName } = await api.fetchGeneratedResumeBlob(generatedResumeId, "pdf"));
       }
 
-      log("requesting PDF from stateless export endpoint");
-      const structured = content.structured as GeneratedResumeStructured;
-      if (targetJobId) persistStructured(targetJobId, structured);
-      const { blob, fileName } = await api.exportResumeToBlob({
-        structured,
-        jobTitle: content.jobTitle ?? jobTitle,
-        company: content.company ?? company,
-        format: "pdf",
-      });
       log(`export fetched ok, size=${blob.size} bytes fileName="${fileName}"`);
-      const fallbackJob = queueJobs.find((job) => job.id === targetJobId);
       const fallbackName = sanitizeResumeFileName(
-        fileName || (fallbackJob ? getFileNameFromJob(fallbackJob) : `resume_${generatedId}.pdf`),
+        fileName || (fallbackJob ? getFileNameFromJob(fallbackJob) : `resume_${targetJobId ?? "generated"}.pdf`),
       );
 
       const saveResult = await saveBlobToSelectedFolder(user.id, fallbackName, blob);
@@ -1197,20 +1200,31 @@ export default function ResumeQueueStudio() {
 
   async function manualDownload(job: QueueViewJob, format: "pdf" | "docx" = "pdf") {
     const structured = getStructuredForJob(job);
-    if (!structured) {
-      toast.error("Resume data not available — please regenerate this resume to download it again.");
-      return;
-    }
+    const generatedResumeId = getGeneratedResumeId(job);
 
     try {
-      const { blob, fileName } = await api.exportResumeToBlob({
-        structured,
-        jobTitle: getJobTitle(job),
-        company: getJobCompany(job),
-        format,
-      });
-      downloadBlob(blob, sanitizeResumeFileName(fileName));
-      toast.success(`${format.toUpperCase()} download started`);
+      if (structured) {
+        const { blob, fileName } = await api.exportResumeToBlob({
+          structured,
+          jobTitle: getJobTitle(job),
+          company: getJobCompany(job),
+          format,
+        });
+        downloadBlob(blob, sanitizeResumeFileName(fileName));
+        toast.success(`${format.toUpperCase()} download started`);
+        return;
+      }
+
+      if (generatedResumeId) {
+        // Local cache missed the realtime-delivered content (refresh, missed
+        // websocket event, etc). Fall back to the server-persisted copy.
+        const { blob, fileName } = await api.fetchGeneratedResumeBlob(generatedResumeId, format);
+        downloadBlob(blob, sanitizeResumeFileName(fileName));
+        toast.success(`${format.toUpperCase()} download started`);
+        return;
+      }
+
+      toast.error("Resume data not available — please regenerate this resume to download it again.");
     } catch (error) {
       toast.error((error as Error).message || "Failed to export the resume");
     }
@@ -1308,15 +1322,15 @@ export default function ResumeQueueStudio() {
             <div className="flex items-center gap-1 xl:justify-end">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="icon" variant="outline" className="h-8 w-8 rounded-md" disabled={!getStructuredForJob(job)}>
+                  <Button size="icon" variant="outline" className="h-8 w-8 rounded-md" disabled={!getStructuredForJob(job) && !generatedResumeId}>
                     <Download className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem disabled={!getStructuredForJob(job)} onClick={() => void manualDownload(job, "pdf")}>
+                  <DropdownMenuItem disabled={!getStructuredForJob(job) && !generatedResumeId} onClick={() => void manualDownload(job, "pdf")}>
                     Download PDF
                   </DropdownMenuItem>
-                  <DropdownMenuItem disabled={!getStructuredForJob(job)} onClick={() => void manualDownload(job, "docx")}>
+                  <DropdownMenuItem disabled={!getStructuredForJob(job) && !generatedResumeId} onClick={() => void manualDownload(job, "docx")}>
                     Download DOCX
                   </DropdownMenuItem>
                 </DropdownMenuContent>
