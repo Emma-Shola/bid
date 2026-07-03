@@ -64,6 +64,15 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function cleanTitleForRoleAlignment(rawTitle: string) {
+  return normalizeWhitespace(
+    rawTitle
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/\s*[-–—|/]\s*(remote|hybrid|onsite|on-site|contract|contractor|c2c|corp[- ]?to[- ]?corp|w2|1099|full[- ]?time|part[- ]?time|temp(?:orary)?|temp[- ]?to[- ]?hire)\b.*$/i, "")
+  ).trim();
+}
+
 function normalizeSkillCategoryName(value: string) {
   const label = normalizeWhitespace(value).replace(/[:\-]+$/g, "").trim();
   const lowered = label.toLowerCase();
@@ -423,9 +432,13 @@ export function buildResumeExportModel(input: {
 
   // Align the most recent role title with the target job title (stored in source.title
   // by candidateProfileToParsedResume) so the resume reads as built for this specific role.
+  // Strip posting-only qualifiers (clearance notes, employment type, etc.) first — copying
+  // those verbatim into an employer-listed job title is an obvious "lifted from the JD" tell,
+  // not something a real previous job title would ever include.
   const targetTitle = normalizeWhitespace(source.title);
-  if (experience.length > 0 && targetTitle) {
-    experience[0] = { ...experience[0], role: targetTitle };
+  const alignedRoleTitle = cleanTitleForRoleAlignment(targetTitle);
+  if (experience.length > 0 && alignedRoleTitle) {
+    experience[0] = { ...experience[0], role: alignedRoleTitle };
   }
 
   return {
