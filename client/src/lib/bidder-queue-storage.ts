@@ -10,6 +10,7 @@ type DirectoryHandleLike = {
       close: () => Promise<void>;
     }>;
   }>;
+  getDirectoryHandle?: (name: string, options?: { create?: boolean }) => Promise<DirectoryHandleLike>;
 };
 
 export type BidderWorkspace = {
@@ -400,7 +401,15 @@ export async function loadDownloadFolderName(userId: string) {
   return handle?.name ?? null;
 }
 
-export async function saveBlobToSelectedFolder(userId: string, fileName: string, blob: Blob) {
+async function getOrCreateSubfolder(root: DirectoryHandleLike, name: string): Promise<DirectoryHandleLike> {
+  if (!root.getDirectoryHandle) {
+    throw new Error("This browser does not support creating subfolders.");
+  }
+  const safeName = sanitizeResumeFileName(name).replace(/\.[a-z0-9]+$/i, "") || "Folder";
+  return root.getDirectoryHandle(safeName, { create: true });
+}
+
+export async function saveBlobToSelectedFolder(userId: string, fileName: string, blob: Blob, subfolderName?: string) {
   // Every step here can throw for reasons that have nothing to do with the
   // generated file itself (revoked OS-level folder permission, the handle's
   // target folder having been moved/deleted, IndexedDB being unavailable in
@@ -439,21 +448,31 @@ export async function saveBlobToSelectedFolder(userId: string, fileName: string,
     return { saved: false, reason: "Permission to write to the folder was denied." };
   }
 
+  let targetFolder = handle;
+  if (subfolderName?.trim()) {
+    try {
+      targetFolder = await getOrCreateSubfolder(handle, subfolderName);
+    } catch (error) {
+      console.warn(`[bidder-queue-storage] failed to create subfolder "${subfolderName}", saving to root instead`, error);
+      targetFolder = handle;
+    }
+  }
+
   const safeName = sanitizeResumeFileName(fileName);
   try {
-    const fileHandle = await handle.getFileHandle(safeName, { create: true });
+    const fileHandle = await targetFolder.getFileHandle(safeName, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(blob);
     await writable.close();
   } catch (error) {
-    console.warn(`[bidder-queue-storage] write to folder "${handle.name}" failed`, error);
+    console.warn(`[bidder-queue-storage] write to folder "${targetFolder.name}" failed`, error);
     return { saved: false, reason: error instanceof Error ? error.message : "Writing the file to the selected folder failed." };
   }
 
-  console.log(`[bidder-queue-storage] auto-save succeeded folder="${handle.name}" file="${safeName}"`);
+  console.log(`[bidder-queue-storage] auto-save succeeded folder="${targetFolder.name}" file="${safeName}"`);
   return {
     saved: true,
-    folderName: handle.name || "Selected folder",
+    folderName: targetFolder.name || "Selected folder",
     fileName: safeName,
   };
 }

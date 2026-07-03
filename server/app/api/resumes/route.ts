@@ -86,7 +86,8 @@ export async function GET(req: NextRequest) {
               username: true,
               managerProfile: {
                 select: {
-                  fullName: true
+                  fullName: true,
+                  generationRules: true
                 }
               }
             }
@@ -119,7 +120,8 @@ export async function GET(req: NextRequest) {
               select: {
                 fullName: true,
                 templateResumeUrl: true,
-                templateResumeText: true
+                templateResumeText: true,
+                generationRules: true
               }
             }
           }
@@ -140,7 +142,8 @@ export async function GET(req: NextRequest) {
               id: manager.id,
               username: manager.username,
               managerProfile: {
-                fullName: manager.managerProfile?.fullName ?? null
+                fullName: manager.managerProfile?.fullName ?? null,
+                generationRules: manager.managerProfile?.generationRules ?? null
               }
             },
             createdBy: null

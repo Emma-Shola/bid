@@ -12,6 +12,7 @@ import {
   markBackgroundJobRetrying
 } from "./background-jobs";
 import { getBackofficeRecipientIds, persistNotifications } from "./notifications";
+import { parseManagerGenerationRules } from "./manager-rules";
 
 type ResumeGenerationJobData = {
   jobId: string;
@@ -82,9 +83,19 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
     throw new Error("Resume job is missing candidateProfile or resumeRulesText — admin must approve the candidate profile before generation.");
   }
 
-  const result = await generateResumeContent(data.payload);
+  const resumeRecord = await prisma.resume.findUnique({
+    where: { id: data.payload.resumeId },
+    select: { manager: { select: { managerProfile: { select: { generationRules: true } } } } }
+  });
+  const managerRules = parseManagerGenerationRules(resumeRecord?.manager?.managerProfile?.generationRules);
+  const qualityGate =
+    managerRules.minAtsScore != null
+      ? { minAtsScore: managerRules.minAtsScore, maxAttempts: managerRules.maxGenerationAttempts }
+      : undefined;
+
+  const result = await generateResumeContent({ ...data.payload, qualityGate });
   const { cache, ...publicResult } = result;
-  const requiresQa = !result.validation.ok;
+  const requiresQa = !result.validation.ok || (result.qualityGate ? !result.qualityGate.metThreshold : false);
 
   await prisma.auditLog.create({
     data: {

@@ -1,12 +1,14 @@
 import { UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/rbac";
 import { jsonError } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { applyCorsHeaders } from "@/lib/cors";
 import { buildResumeDocxBuffer, buildResumePdfBuffer } from "@/lib/resume/exporter";
 import { type ParsedResume, type TailoredResume } from "@/lib/resume/types";
+import { parseManagerGenerationRules } from "@/lib/manager-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +21,7 @@ const exportSchema = z.object({
   jobTitle: z.string().min(1).max(500),
   company: z.string().min(1).max(255),
   format: z.enum(["pdf", "docx"]).default("pdf"),
+  resumeId: z.string().trim().min(1).optional(),
 });
 
 function sanitizeFileName(value: string) {
@@ -44,7 +47,7 @@ export async function POST(req: NextRequest) {
       return applyCorsHeaders(req, jsonError("Invalid export payload", 422, parsed.error.flatten()));
     }
 
-    const { structured, jobTitle, company, format } = parsed.data;
+    const { structured, jobTitle, company, format, resumeId } = parsed.data;
 
     const source = structured.source as ParsedResume;
     const tailored = structured.tailored as TailoredResume;
@@ -54,7 +57,23 @@ export async function POST(req: NextRequest) {
         ? await buildResumeDocxBuffer({ source, tailored })
         : await buildResumePdfBuffer({ source, tailored });
 
-    const fileBase = sanitizeFileName(company || jobTitle);
+    let filenameIncludesCandidateName = false;
+    if (resumeId) {
+      const resumeRecord = await prisma.resume
+        .findUnique({
+          where: { id: resumeId },
+          select: { manager: { select: { managerProfile: { select: { generationRules: true } } } } }
+        })
+        .catch(() => null);
+      const rules = parseManagerGenerationRules(resumeRecord?.manager?.managerProfile?.generationRules);
+      filenameIncludesCandidateName = Boolean(rules.filenameIncludesCandidateName);
+    }
+
+    const candidateName = typeof source.name === "string" ? source.name.trim() : "";
+    const fileBase =
+      filenameIncludesCandidateName && candidateName
+        ? sanitizeFileName(`${candidateName} - ${company || jobTitle}`)
+        : sanitizeFileName(company || jobTitle);
     const contentType =
       format === "docx"
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

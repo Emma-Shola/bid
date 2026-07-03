@@ -25,6 +25,7 @@ type HydratedResumeResult = {
     warnings: string[];
   };
   score: ResumeScore;
+  qualityGate?: { minAtsScore: number; attempts: number; metThreshold: boolean } | null;
   structured: {
     source: ParsedResume;
     jobAnalysis: JobAnalysis;

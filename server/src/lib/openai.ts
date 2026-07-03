@@ -7,6 +7,7 @@ export async function generateResumeContent(input: {
   candidateName?: string;
   candidateProfile: unknown;
   resumeRulesText?: string;
+  qualityGate?: { minAtsScore: number; maxAttempts?: number };
 }) {
   return generateDeterministicResumeContent(input);
 }

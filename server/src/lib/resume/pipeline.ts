@@ -22,6 +22,7 @@ export async function generateDeterministicResumeContent(input: {
   candidateName?: string;
   candidateProfile: CandidateProfile | unknown;
   resumeRulesText?: string;
+  qualityGate?: { minAtsScore: number; maxAttempts?: number };
 }) {
   const candidateProfile = CandidateProfileSchema.parse(input.candidateProfile);
   const candidateLabel = candidateProfile.personalInfo.name || input.candidateName || "Candidate";
@@ -134,7 +135,62 @@ export async function generateDeterministicResumeContent(input: {
       tailored = validation.sanitized;
     }
 
-    const score = scoreTailoredResume(profileSkeleton, jobAnalysis, tailored);
+    let score = scoreTailoredResume(profileSkeleton, jobAnalysis, tailored);
+
+    // ATS quality gate: a manager can require a minimum ATS score. If the first
+    // pass falls short, reuse the existing repair machinery (same one used for
+    // structural validation failures above) to push for a higher-scoring
+    // revision, up to maxAttempts total generation passes. Keeps the
+    // best-scoring valid candidate seen if none clear the bar.
+    const minAtsScore = input.qualityGate?.minAtsScore;
+    const maxQualityAttempts = Math.max(1, input.qualityGate?.maxAttempts ?? 3);
+    let qualityGateAttempts = 1;
+
+    if (minAtsScore != null && validation.ok) {
+      let bestTailored = tailored;
+      let bestScore = score;
+      let bestValidation = validation;
+
+      while (bestScore.overall < minAtsScore && qualityGateAttempts < maxQualityAttempts) {
+        qualityGateAttempts += 1;
+        const repairedRaw = await repairTailoredResumeRaw({
+          source: profileSkeleton,
+          jobAnalysis,
+          gapAnalysis: initialGapAnalysis,
+          previousOutput: JSON.stringify(bestTailored, null, 2),
+          issues: [
+            `ATS match score is ${Math.round(bestScore.overall)}%, below the required ${minAtsScore}%. Increase job-description keyword coverage, add more quantified metrics, and strengthen technical alignment with the JD while preserving every fixed candidate fact exactly.`
+          ],
+          resumeRulesText: input.resumeRulesText
+        }).catch(() => null);
+
+        if (!repairedRaw) break;
+
+        try {
+          const candidateTailored = parseTailoredResumeOutput(repairedRaw);
+          const candidateValidation = validateTailoredResume(profileSkeleton, candidateTailored);
+          if (!candidateValidation.ok) continue;
+          const candidateScore = scoreTailoredResume(profileSkeleton, jobAnalysis, candidateValidation.sanitized);
+          if (candidateScore.overall > bestScore.overall) {
+            bestTailored = candidateValidation.sanitized;
+            bestScore = candidateScore;
+            bestValidation = candidateValidation;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      tailored = bestTailored;
+      score = bestScore;
+      validation = bestValidation;
+    }
+
+    const qualityGateResult =
+      minAtsScore != null
+        ? { minAtsScore, attempts: qualityGateAttempts, metThreshold: score.overall >= minAtsScore }
+        : null;
+
     const gapAnalysis = finalizeGapAnalysis({
       initial: initialGapAnalysis,
       tailored,
@@ -168,6 +224,7 @@ export async function generateDeterministicResumeContent(input: {
         warnings: validation.warnings
       },
       score: scoreWithTransformationAudit,
+      qualityGate: qualityGateResult,
       structured: {
         source: profileSkeleton,
         jobAnalysis,

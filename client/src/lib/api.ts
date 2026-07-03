@@ -3,6 +3,7 @@ import type {
   ApplicationStatus,
   AuditLog,
   BackgroundJob,
+  ManagerGenerationRules,
   NotificationItem,
   Payment,
   ResumeTemplate,
@@ -51,6 +52,7 @@ type ApiUserRecord = {
     email: string;
     fullName: string;
     templateResumeUrl?: string | null;
+    generationRules?: ManagerGenerationRules | null;
   } | null;
 };
 
@@ -222,6 +224,7 @@ function mapUser(user: ApiUserRecord): User {
     managerId: user.bidder?.managerId ?? null,
     managerName,
     totalPaid: user.bidder?.totalPaid ?? 0,
+    generationRules: user.managerProfile?.generationRules ?? null,
   };
 }
 
@@ -407,7 +410,7 @@ function mapResumeTemplate(template: {
   manager?: {
     id: string;
     username: string;
-    managerProfile?: { fullName?: string | null } | null;
+    managerProfile?: { fullName?: string | null; generationRules?: ManagerGenerationRules | null } | null;
   } | null;
 }): ResumeTemplate {
   const fileUrl = resolveAssetUrl(template.fileUrl);
@@ -426,6 +429,7 @@ function mapResumeTemplate(template: {
     fileUrl,
     openUrl,
     textLength: template.textLength,
+    generationRules: template.manager?.managerProfile?.generationRules ?? null,
     createdAt: new Date(template.createdAt).toISOString(),
     updatedAt: template.updatedAt ? new Date(template.updatedAt).toISOString() : undefined,
   };
@@ -879,6 +883,17 @@ export const api = {
       await request(`/api/admin/resumes/${realResumes[0].id}`, { method: "DELETE" });
     },
 
+  async updateManagerRules(managerId: string, rules: ManagerGenerationRules): Promise<ManagerGenerationRules> {
+    const data = await request<{ generationRules: ManagerGenerationRules | null }>(
+      `/api/admin/managers/${managerId}/rules`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(rules),
+      },
+    );
+    return data.generationRules ?? {};
+  },
+
   async getResumeProfile(resumeId: string): Promise<{
     resume: ResumeTemplate & {
       originalText: string;
@@ -1229,12 +1244,19 @@ export const api = {
     jobTitle: string;
     company: string;
     format?: "pdf" | "docx";
+    resumeId?: string;
   }): Promise<{ blob: Blob; fileName: string; contentType: string }> {
     const format = input.format ?? "pdf";
     const response = await requestBlob("/api/ai/export-resume", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ structured: input.structured, jobTitle: input.jobTitle, company: input.company, format }),
+      body: JSON.stringify({
+        structured: input.structured,
+        jobTitle: input.jobTitle,
+        company: input.company,
+        format,
+        resumeId: input.resumeId,
+      }),
     });
 
     if (!response.ok) {

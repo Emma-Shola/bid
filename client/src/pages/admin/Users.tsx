@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -155,6 +155,124 @@ function ClientsDialog({
   );
 }
 
+function ManagerRulesDialog({
+  manager,
+  onClose,
+}: {
+  manager: User | null;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [minAtsScore, setMinAtsScore] = useState("");
+  const [maxAttempts, setMaxAttempts] = useState("");
+  const [filenameIncludesCandidateName, setFilenameIncludesCandidateName] = useState(false);
+  const [groupDownloadsByCompanyFolder, setGroupDownloadsByCompanyFolder] = useState(false);
+
+  useEffect(() => {
+    if (!manager) return;
+    const rules = manager.generationRules ?? {};
+    setMinAtsScore(typeof rules.minAtsScore === "number" ? String(rules.minAtsScore) : "");
+    setMaxAttempts(typeof rules.maxGenerationAttempts === "number" ? String(rules.maxGenerationAttempts) : "");
+    setFilenameIncludesCandidateName(Boolean(rules.filenameIncludesCandidateName));
+    setGroupDownloadsByCompanyFolder(Boolean(rules.groupDownloadsByCompanyFolder));
+  }, [manager]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateManagerRules(manager!.id, {
+        minAtsScore: minAtsScore.trim() ? Number(minAtsScore) : undefined,
+        maxGenerationAttempts: maxAttempts.trim() ? Number(maxAttempts) : undefined,
+        filenameIncludesCandidateName,
+        groupDownloadsByCompanyFolder,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      toast.success("Generation rules saved");
+      onClose();
+    },
+    onError: (error) => {
+      toast.error((error as Error).message || "Failed to save generation rules");
+    },
+  });
+
+  return (
+    <Dialog open={!!manager} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Generation rules — {manager?.name}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="minAtsScore">Minimum ATS score (%)</Label>
+            <Input
+              id="minAtsScore"
+              type="number"
+              min="0"
+              max="100"
+              placeholder="No minimum"
+              value={minAtsScore}
+              onChange={(e) => setMinAtsScore(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Resumes below this score auto-regenerate before falling back to QA review.
+            </p>
+          </div>
+
+          {minAtsScore.trim() && (
+            <div className="space-y-1.5">
+              <Label htmlFor="maxAttempts">Max regeneration attempts</Label>
+              <Input
+                id="maxAttempts"
+                type="number"
+                min="1"
+                max="5"
+                placeholder="3"
+                value={maxAttempts}
+                onChange={(e) => setMaxAttempts(e.target.value)}
+              />
+            </div>
+          )}
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={filenameIncludesCandidateName}
+              onChange={(e) => setFilenameIncludesCandidateName(e.target.checked)}
+            />
+            <span>Name downloaded files after the candidate</span>
+          </label>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={groupDownloadsByCompanyFolder}
+              onChange={(e) => setGroupDownloadsByCompanyFolder(e.target.checked)}
+            />
+            <span>
+              Save auto-downloads into a folder named after the target company
+              <span className="block text-xs text-muted-foreground">
+                Only applies to auto-saved downloads, not manual re-downloads from the queue.
+              </span>
+            </span>
+          </label>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="button" disabled={save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? "Saving..." : "Save rules"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Users() {
   const qc = useQueryClient();
   const { user, loading } = useAuth();
@@ -182,6 +300,7 @@ export default function Users() {
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [uploadingTemplateManagerId, setUploadingTemplateManagerId] = useState<string | null>(null);
   const [clientsDialogBidder, setClientsDialogBidder] = useState<User | null>(null);
+  const [rulesDialogManager, setRulesDialogManager] = useState<User | null>(null);
 
   const managers = useMemo(
     () => data.filter((item) => item.role === "manager"),
@@ -481,6 +600,14 @@ export default function Users() {
                   ? "Deleting..."
                   : "Delete CV"}
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRulesDialogManager(row)}
+              >
+                Rules
+              </Button>
             </>
           )}
 
@@ -509,6 +636,8 @@ export default function Users() {
           qc.invalidateQueries({ queryKey: ["users"] });
         }}
       />
+
+      <ManagerRulesDialog manager={rulesDialogManager} onClose={() => setRulesDialogManager(null)} />
 
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="mb-4">

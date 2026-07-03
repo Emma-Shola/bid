@@ -11,6 +11,7 @@ import { createBackgroundJob, markBackgroundJobCompleted, markBackgroundJobQaReq
 import { enqueueResumeGenerationJob } from "@/lib/background-queue";
 import { toPrismaJson } from "@/lib/json";
 import { CandidateProfileSchema, type CandidateProfile } from "@/lib/resume/candidate-profile";
+import { parseManagerGenerationRules } from "@/lib/manager-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +68,7 @@ async function finalizeGeneratedResume(input: {
   result: Awaited<ReturnType<typeof generateResumeContent>>;
 }) {
   const { cache, ...publicResult } = input.result;
-  const requiresQa = !input.result.validation.ok;
+  const requiresQa = !input.result.validation.ok || (input.result.qualityGate ? !input.result.qualityGate.metThreshold : false);
 
   await prisma.auditLog.create({
     data: {
@@ -116,7 +117,7 @@ async function finalizeGeneratedResume(input: {
     await markBackgroundJobCompleted(input.backgroundJobId, dbResult, publicResult);
   }
 
-  return { publicResult };
+  return { publicResult, requiresQa };
 }
 
 export async function POST(req: NextRequest) {
@@ -181,6 +182,12 @@ export async function POST(req: NextRequest) {
     const resumeRulesText = templateResume.resumeRulesText;
     const candidateName = candidateProfile.personalInfo.name;
 
+    const managerRules = parseManagerGenerationRules(bidder.manager?.managerProfile?.generationRules);
+    const qualityGate =
+      managerRules.minAtsScore != null
+        ? { minAtsScore: managerRules.minAtsScore, maxAttempts: managerRules.maxGenerationAttempts }
+        : undefined;
+
     const backgroundJob = await createBackgroundJob({
       userId: auth.user.id,
       type: "resume.generate",
@@ -203,10 +210,11 @@ export async function POST(req: NextRequest) {
         jobDescription: parsed.data.jobDescription,
         candidateName,
         candidateProfile,
-        resumeRulesText
+        resumeRulesText,
+        qualityGate
       });
 
-      const { publicResult } = await finalizeGeneratedResume({
+      const { publicResult, requiresQa } = await finalizeGeneratedResume({
         authUserId: auth.user.id,
         templateResumeId: templateResume.id,
         jobTitle: parsed.data.jobTitle,
@@ -222,7 +230,7 @@ export async function POST(req: NextRequest) {
         {
           data: {
             jobId: backgroundJob.id,
-            status: result.validation.ok ? "completed" : "qa_required",
+            status: requiresQa ? "qa_required" : "completed",
             resumeId: templateResume.id,
             preview,
             ...publicResult,
@@ -275,10 +283,11 @@ export async function POST(req: NextRequest) {
       jobDescription: parsed.data.jobDescription,
       candidateName,
       candidateProfile,
-      resumeRulesText
+      resumeRulesText,
+      qualityGate
     });
 
-    const { publicResult } = await finalizeGeneratedResume({
+    const { publicResult, requiresQa } = await finalizeGeneratedResume({
       authUserId: auth.user.id,
       templateResumeId: templateResume.id,
       jobTitle: parsed.data.jobTitle,
@@ -292,7 +301,7 @@ export async function POST(req: NextRequest) {
       {
         data: {
           jobId: backgroundJob.id,
-          status: result.validation.ok ? "completed" : "qa_required",
+          status: requiresQa ? "qa_required" : "completed",
           resumeId: templateResume.id,
           preview: publicResult.resumeMarkdown || publicResult.coverLetterMarkdown || "",
           ...publicResult,

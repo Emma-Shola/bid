@@ -2,6 +2,13 @@ export type Role = "bidder" | "manager" | "admin";
 
 export type AccountStatus = "pending" | "active" | "suspended";
 
+export interface ManagerGenerationRules {
+  minAtsScore?: number;
+  maxGenerationAttempts?: number;
+  filenameIncludesCandidateName?: boolean;
+  groupDownloadsByCompanyFolder?: boolean;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -18,6 +25,7 @@ export interface User {
   managerId?: string | null;
   managerName?: string | null;
   totalPaid?: number;
+  generationRules?: ManagerGenerationRules | null;
 }
 
 export type ApplicationStatus =
@@ -150,4 +158,5 @@ export interface ResumeTemplate {
   textLength: number;
   createdAt: string;
   updatedAt?: string;
+  generationRules?: ManagerGenerationRules | null;
 }

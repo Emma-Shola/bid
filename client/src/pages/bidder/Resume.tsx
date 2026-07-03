@@ -869,6 +869,11 @@ export default function ResumeQueueStudio() {
 
     try {
       const fallbackJob = queueJobs.find((job) => job.id === targetJobId);
+      const jobResumeId = fallbackJob ? getGenerationInputFromJob(fallbackJob).resumeId : selectedResumeId;
+      const managerRules = resumeTemplates.find((template) => template.id === jobResumeId)?.generationRules;
+      const jobCompany = content.company ?? company;
+      const subfolderName = managerRules?.groupDownloadsByCompanyFolder && jobCompany ? jobCompany : undefined;
+
       const hasStructured =
         content.structured && typeof content.structured === "object" &&
         "source" in (content.structured as object) && "tailored" in (content.structured as object);
@@ -883,8 +888,9 @@ export default function ResumeQueueStudio() {
         ({ blob, fileName } = await api.exportResumeToBlob({
           structured,
           jobTitle: content.jobTitle ?? jobTitle,
-          company: content.company ?? company,
+          company: jobCompany,
           format: "pdf",
+          resumeId: jobResumeId,
         }));
       } else {
         // The realtime-delivered content was missed (refresh, dropped
@@ -904,7 +910,7 @@ export default function ResumeQueueStudio() {
         fileName || (fallbackJob ? getFileNameFromJob(fallbackJob) : `resume_${targetJobId ?? "generated"}.pdf`),
       );
 
-      const saveResult = await saveBlobToSelectedFolder(user.id, fallbackName, blob);
+      const saveResult = await saveBlobToSelectedFolder(user.id, fallbackName, blob, subfolderName);
       if (saveResult.saved) {
         log(`saved to folder "${saveResult.folderName}" as "${saveResult.fileName}"`);
         autoSaveStateRef.current.set(dedupeKey, "saved");
@@ -1221,6 +1227,7 @@ export default function ResumeQueueStudio() {
           jobTitle: getJobTitle(job),
           company: getJobCompany(job),
           format,
+          resumeId: getGenerationInputFromJob(job).resumeId,
         });
         downloadBlob(blob, sanitizeResumeFileName(fileName));
         toast.success(`${format.toUpperCase()} download started`);

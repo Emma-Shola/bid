@@ -77,7 +77,8 @@ export async function GET(req: NextRequest) {
         select: {
           email: true,
           fullName: true,
-          templateResumeUrl: true
+          templateResumeUrl: true,
+          generationRules: true
         }
       }
     } as const;
@@ -120,7 +121,8 @@ export async function GET(req: NextRequest) {
           select: {
             email: true,
             fullName: true,
-            templateResumeUrl: true
+            templateResumeUrl: true,
+            generationRules: true
           }
         }
       } as const;

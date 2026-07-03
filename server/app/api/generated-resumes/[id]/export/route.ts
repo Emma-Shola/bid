@@ -12,6 +12,7 @@ import { buildResumeDocxBuffer, buildResumePdfBuffer } from "@/lib/resume/export
 import { analyzeJobDescription } from "@/lib/resume/jd";
 import { buildProfileSkeleton } from "@/lib/resume/profile-skeleton";
 import { type ParsedResume, type TailoredResume } from "@/lib/resume/types";
+import { parseManagerGenerationRules } from "@/lib/manager-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -200,7 +201,8 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
             id: true,
             managerId: true,
             title: true,
-            originalText: true
+            originalText: true,
+            manager: { select: { managerProfile: { select: { generationRules: true } } } }
           }
         }
       }
@@ -241,9 +243,14 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
           });
     log(`buffer built size=${buffer.length} bytes`);
 
-    const fileBase = sanitizeFileName(
-      [generated.resume.title || generated.jobTitle, generated.company, format].filter(Boolean).join("-")
-    );
+    const managerRules = parseManagerGenerationRules(generated.resume.manager?.managerProfile?.generationRules);
+    const candidateName = exportPayload.source.name?.trim();
+    const fileBase =
+      managerRules.filenameIncludesCandidateName && candidateName
+        ? sanitizeFileName(`${candidateName} - ${generated.company}`)
+        : sanitizeFileName(
+            [generated.resume.title || generated.jobTitle, generated.company, format].filter(Boolean).join("-")
+          );
     const contentType =
       format === "docx"
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
