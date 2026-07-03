@@ -7,6 +7,7 @@ export interface ManagerGenerationRules {
   maxGenerationAttempts?: number;
   filenameIncludesCandidateName?: boolean;
   groupDownloadsByCompanyFolder?: boolean;
+  duplicateCompanyCooldownDays?: number;
 }
 
 export interface User {

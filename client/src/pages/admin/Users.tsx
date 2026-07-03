@@ -167,6 +167,7 @@ function ManagerRulesDialog({
   const [maxAttempts, setMaxAttempts] = useState("");
   const [filenameIncludesCandidateName, setFilenameIncludesCandidateName] = useState(false);
   const [groupDownloadsByCompanyFolder, setGroupDownloadsByCompanyFolder] = useState(false);
+  const [duplicateCompanyCooldownDays, setDuplicateCompanyCooldownDays] = useState("");
 
   useEffect(() => {
     if (!manager) return;
@@ -175,6 +176,9 @@ function ManagerRulesDialog({
     setMaxAttempts(typeof rules.maxGenerationAttempts === "number" ? String(rules.maxGenerationAttempts) : "");
     setFilenameIncludesCandidateName(Boolean(rules.filenameIncludesCandidateName));
     setGroupDownloadsByCompanyFolder(Boolean(rules.groupDownloadsByCompanyFolder));
+    setDuplicateCompanyCooldownDays(
+      typeof rules.duplicateCompanyCooldownDays === "number" ? String(rules.duplicateCompanyCooldownDays) : "",
+    );
   }, [manager]);
 
   const save = useMutation({
@@ -184,6 +188,9 @@ function ManagerRulesDialog({
         maxGenerationAttempts: maxAttempts.trim() ? Number(maxAttempts) : undefined,
         filenameIncludesCandidateName,
         groupDownloadsByCompanyFolder,
+        duplicateCompanyCooldownDays: duplicateCompanyCooldownDays.trim()
+          ? Number(duplicateCompanyCooldownDays)
+          : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["users"] });
@@ -233,6 +240,22 @@ function ManagerRulesDialog({
               />
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="duplicateCompanyCooldownDays">Block reapplying to the same company for (days)</Label>
+            <Input
+              id="duplicateCompanyCooldownDays"
+              type="number"
+              min="1"
+              max="365"
+              placeholder="No restriction"
+              value={duplicateCompanyCooldownDays}
+              onChange={(e) => setDuplicateCompanyCooldownDays(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              A bidder can't generate a resume for a company they already targeted within this window.
+            </p>
+          </div>
 
           <label className="flex items-start gap-2 text-sm">
             <input

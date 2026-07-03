@@ -16,6 +16,16 @@ import { parseManagerGenerationRules } from "@/lib/manager-rules";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function normalizeCompanyName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[.,]/g, "")
+    .replace(/\b(inc|llc|ltd|corp|corporation|co|company|limited|group|holdings)\b\.?/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function resolveTemplateResume(input: {
   managerId: string | null;
   resumeId?: string;
@@ -187,6 +197,33 @@ export async function POST(req: NextRequest) {
       managerRules.minAtsScore != null
         ? { minAtsScore: managerRules.minAtsScore, maxAttempts: managerRules.maxGenerationAttempts }
         : undefined;
+
+    if (managerRules.duplicateCompanyCooldownDays) {
+      const cutoff = new Date(Date.now() - managerRules.duplicateCompanyCooldownDays * 24 * 60 * 60 * 1000);
+      const recentJobs = await prisma.backgroundJob.findMany({
+        where: {
+          userId: auth.user.id,
+          type: "resume.generate",
+          createdAt: { gte: cutoff }
+        },
+        select: { payload: true, createdAt: true }
+      });
+
+      const targetCompany = normalizeCompanyName(parsed.data.company);
+      const duplicate = recentJobs.find((job) => {
+        const payload = job.payload as { company?: unknown } | null;
+        const jobCompany = typeof payload?.company === "string" ? normalizeCompanyName(payload.company) : "";
+        return Boolean(targetCompany) && jobCompany === targetCompany;
+      });
+
+      if (duplicate) {
+        const appliedOn = duplicate.createdAt.toISOString().slice(0, 10);
+        return jsonError(
+          `You already generated a resume for ${parsed.data.company} on ${appliedOn}. Your manager blocks reapplying to the same company within ${managerRules.duplicateCompanyCooldownDays} days.`,
+          409
+        );
+      }
+    }
 
     const backgroundJob = await createBackgroundJob({
       userId: auth.user.id,

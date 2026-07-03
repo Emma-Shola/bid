@@ -5,7 +5,8 @@ export const ManagerGenerationRulesSchema = z
     minAtsScore: z.number().min(0).max(100).optional(),
     maxGenerationAttempts: z.number().int().min(1).max(5).optional(),
     filenameIncludesCandidateName: z.boolean().optional(),
-    groupDownloadsByCompanyFolder: z.boolean().optional()
+    groupDownloadsByCompanyFolder: z.boolean().optional(),
+    duplicateCompanyCooldownDays: z.number().int().min(1).max(365).optional()
   })
   .strict();
 
