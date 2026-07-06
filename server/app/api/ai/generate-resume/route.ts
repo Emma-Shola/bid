@@ -11,7 +11,8 @@ import { createBackgroundJob, markBackgroundJobCompleted, markBackgroundJobQaReq
 import { enqueueResumeGenerationJob } from "@/lib/background-queue";
 import { toPrismaJson } from "@/lib/json";
 import { CandidateProfileSchema, type CandidateProfile } from "@/lib/resume/candidate-profile";
-import { normalizeCompanyName, parseAppliedCompanies, parseManagerGenerationRules } from "@/lib/manager-rules";
+import { parseManagerGenerationRules } from "@/lib/manager-rules";
+import { checkDuplicateCompany } from "@/lib/resume/duplicate-check";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -188,42 +189,18 @@ export async function POST(req: NextRequest) {
         ? { minAtsScore: managerRules.minAtsScore, maxAttempts: managerRules.maxGenerationAttempts }
         : undefined;
 
-    if (managerRules.duplicateCompanyCooldownDays) {
-      const cooldownDays = managerRules.duplicateCompanyCooldownDays;
-      const cutoff = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000);
-      const targetCompany = normalizeCompanyName(parsed.data.company);
+    const duplicateCheck = await checkDuplicateCompany({
+      userId: auth.user.id,
+      company: parsed.data.company,
+      managerGenerationRulesRaw: bidder.manager?.managerProfile?.generationRules,
+      appliedCompaniesRaw: bidder.manager?.managerProfile?.appliedCompanies
+    });
 
-      const recentJobs = await prisma.backgroundJob.findMany({
-        where: {
-          userId: auth.user.id,
-          type: "resume.generate",
-          createdAt: { gte: cutoff }
-        },
-        select: { payload: true, createdAt: true }
-      });
-
-      const jobDuplicate = recentJobs.find((job) => {
-        const payload = job.payload as { company?: unknown } | null;
-        const jobCompany = typeof payload?.company === "string" ? normalizeCompanyName(payload.company) : "";
-        return Boolean(targetCompany) && jobCompany === targetCompany;
-      });
-
-      // Also check the manager's manually-imported list of companies the
-      // client already applied to before this system was tracking anything.
-      const appliedCompanies = parseAppliedCompanies(bidder.manager?.managerProfile?.appliedCompanies);
-      const importedDuplicate = appliedCompanies.find(
-        (entry) => normalizeCompanyName(entry.company) === targetCompany && new Date(entry.appliedAt) >= cutoff
+    if (duplicateCheck.blocked) {
+      return jsonError(
+        `You already applied to ${parsed.data.company} on ${duplicateCheck.appliedOn}. Your manager blocks reapplying to the same company within ${duplicateCheck.cooldownDays} days.`,
+        409
       );
-
-      const blockingDate = jobDuplicate?.createdAt ?? (importedDuplicate ? new Date(importedDuplicate.appliedAt) : null);
-
-      if (blockingDate) {
-        const appliedOn = blockingDate.toISOString().slice(0, 10);
-        return jsonError(
-          `You already applied to ${parsed.data.company} on ${appliedOn}. Your manager blocks reapplying to the same company within ${cooldownDays} days.`,
-          409
-        );
-      }
     }
 
     const backgroundJob = await createBackgroundJob({

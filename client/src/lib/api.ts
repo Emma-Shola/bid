@@ -4,6 +4,7 @@ import type {
   AppliedCompanyEntry,
   AuditLog,
   BackgroundJob,
+  DuplicateCompanyCheck,
   ManagerGenerationRules,
   NotificationItem,
   Payment,
@@ -1229,6 +1230,35 @@ export const api = {
       keyPoints: data.keyPoints ?? [],
       followUpQuestions: data.followUpQuestions ?? [],
     };
+  },
+
+  async checkDuplicateCompany(company: string): Promise<DuplicateCompanyCheck> {
+    const data = await request<{ duplicate: DuplicateCompanyCheck }>(
+      "/api/ai/check-duplicate-company",
+      {
+        method: "POST",
+        body: JSON.stringify({ company }),
+      },
+    );
+    return data.duplicate;
+  },
+
+  async parseJobPosting(text: string): Promise<{
+    company: string;
+    jobTitle: string;
+    duplicate: DuplicateCompanyCheck | null;
+  }> {
+    return request<{
+      company: string;
+      jobTitle: string;
+      duplicate: DuplicateCompanyCheck | null;
+    }>(
+      "/api/ai/parse-job-posting",
+      {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      },
+    );
   },
 
   async downloadGeneratedResumeExport(

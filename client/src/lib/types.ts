@@ -15,6 +15,12 @@ export interface AppliedCompanyEntry {
   appliedAt: string;
 }
 
+export interface DuplicateCompanyCheck {
+  blocked: boolean;
+  cooldownDays?: number;
+  appliedOn?: string;
+}
+
 export interface User {
   id: string;
   email: string;

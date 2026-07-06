@@ -46,7 +46,7 @@ import { normalizeGeneratedResumePreview } from "@/lib/resume-source";
 import { useChannel, type RealtimeEvent } from "@/lib/realtime";
 import { ResumeDocumentPreview } from "@/components/resume/ResumeDocumentPreview";
 import type { GeneratedResumeStructured } from "@/lib/resume-preview";
-import type { BackgroundJob, ResumeTemplate } from "@/lib/types";
+import type { BackgroundJob, DuplicateCompanyCheck, ResumeTemplate } from "@/lib/types";
 import {
   assignJobToWorkspace,
   bootstrapBidderQueueStore,
@@ -333,6 +333,8 @@ export default function ResumeQueueStudio() {
   const [company, setCompany] = useState("");
   const [jobUrl, setJobUrl] = useState("");
   const [jobDescription, setJobDescription] = useState("");
+  const [jobPostingPaste, setJobPostingPaste] = useState("");
+  const [duplicateCheck, setDuplicateCheck] = useState<DuplicateCompanyCheck | null>(null);
   const [selectedResumeId, setSelectedResumeId] = useState(setupState.resumeId ?? "");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(setupState.workspaceId ?? null);
   const [statusFilter, setStatusFilter] = useState<QueueFilter>("all");
@@ -1156,6 +1158,32 @@ export default function ResumeQueueStudio() {
     }
   }
 
+  const extractJobDetails = useMutation({
+    mutationFn: () => api.parseJobPosting(jobPostingPaste),
+    onSuccess: (result) => {
+      if (result.jobTitle) setJobTitle(result.jobTitle);
+      if (result.company) setCompany(result.company);
+      setJobDescription(jobPostingPaste);
+      setDuplicateCheck(result.duplicate);
+      if (!result.company) {
+        toast.warning("Couldn't confidently detect the company — check the fields and adjust if needed.");
+      } else {
+        toast.success("Job details extracted");
+      }
+    },
+    onError: (error) => {
+      toast.error((error as Error).message || "Failed to extract job details");
+    },
+  });
+
+  const recheckCompany = useMutation({
+    mutationFn: () => api.checkDuplicateCompany(company),
+    onSuccess: (result) => setDuplicateCheck(result),
+    onError: (error) => {
+      toast.error((error as Error).message || "Failed to check company");
+    },
+  });
+
   function handleGenerate() {
     const missing: string[] = [];
     if (!jobTitle.trim()) missing.push("job title");
@@ -1197,6 +1225,8 @@ export default function ResumeQueueStudio() {
     setCompany("");
     setJobUrl("");
     setJobDescription("");
+    setJobPostingPaste("");
+    setDuplicateCheck(null);
     return true;
   }
 
@@ -1918,6 +1948,43 @@ export default function ResumeQueueStudio() {
             </DialogHeader>
 
             <div className="mt-5 space-y-4">
+              <div className="space-y-1.5 rounded-lg border border-dashed border-border bg-muted/20 p-3">
+                <Label htmlFor="jobPostingPaste">Paste the full job posting</Label>
+                <Textarea
+                  id="jobPostingPaste"
+                  rows={5}
+                  value={jobPostingPaste}
+                  onChange={(event) => setJobPostingPaste(event.target.value)}
+                  placeholder="Highlight and paste the whole listing from the job board here..."
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    Auto-fills job title, company, and description below — and flags if you've already applied.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={extractJobDetails.isPending || !jobPostingPaste.trim()}
+                    onClick={() => extractJobDetails.mutate()}
+                  >
+                    {extractJobDetails.isPending ? "Extracting..." : "Extract & fill"}
+                  </Button>
+                </div>
+              </div>
+
+              {duplicateCheck?.blocked && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  You already applied to {company || "this company"} on {duplicateCheck.appliedOn}. Blocked from
+                  reapplying for {duplicateCheck.cooldownDays} days.
+                </div>
+              )}
+              {duplicateCheck && !duplicateCheck.blocked && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  No recent application found for {company || "this company"} — clear to generate.
+                </div>
+              )}
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="jobTitle">Job title</Label>
@@ -1925,7 +1992,26 @@ export default function ResumeQueueStudio() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="company">Company</Label>
-                  <Input id="company" value={company} onChange={(event) => setCompany(event.target.value)} />
+                  <div className="flex gap-1.5">
+                    <Input
+                      id="company"
+                      value={company}
+                      onChange={(event) => {
+                        setCompany(event.target.value);
+                        setDuplicateCheck(null);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={recheckCompany.isPending || !company.trim()}
+                      onClick={() => recheckCompany.mutate()}
+                    >
+                      {recheckCompany.isPending ? "..." : "Check"}
+                    </Button>
+                  </div>
                 </div>
               </div>
 
