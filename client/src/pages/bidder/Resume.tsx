@@ -333,8 +333,10 @@ export default function ResumeQueueStudio() {
   const [company, setCompany] = useState("");
   const [jobUrl, setJobUrl] = useState("");
   const [jobDescription, setJobDescription] = useState("");
-  const [jobPostingPaste, setJobPostingPaste] = useState("");
   const [duplicateCheck, setDuplicateCheck] = useState<DuplicateCompanyCheck | null>(null);
+  const [jobBoardPaste, setJobBoardPaste] = useState("");
+  const [clearCompanies, setClearCompanies] = useState<string[] | null>(null);
+  const [companyFilterStats, setCompanyFilterStats] = useState<{ totalExtracted: number; blockedCount: number } | null>(null);
   const [selectedResumeId, setSelectedResumeId] = useState(setupState.resumeId ?? "");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(setupState.workspaceId ?? null);
   const [statusFilter, setStatusFilter] = useState<QueueFilter>("all");
@@ -1158,21 +1160,19 @@ export default function ResumeQueueStudio() {
     }
   }
 
-  const extractJobDetails = useMutation({
-    mutationFn: () => api.parseJobPosting(jobPostingPaste),
+  const filterCompanies = useMutation({
+    mutationFn: () => api.filterCompaniesFromText(jobBoardPaste),
     onSuccess: (result) => {
-      if (result.jobTitle) setJobTitle(result.jobTitle);
-      if (result.company) setCompany(result.company);
-      setJobDescription(jobPostingPaste);
-      setDuplicateCheck(result.duplicate);
-      if (!result.company) {
-        toast.warning("Couldn't confidently detect the company — check the fields and adjust if needed.");
+      setClearCompanies(result.clearCompanies);
+      setCompanyFilterStats({ totalExtracted: result.totalExtracted, blockedCount: result.blockedCount });
+      if (result.totalExtracted === 0) {
+        toast.warning("Couldn't find any company names in that text.");
       } else {
-        toast.success("Job details extracted");
+        toast.success(`${result.clearCompanies.length} of ${result.totalExtracted} companies are clear to apply to`);
       }
     },
     onError: (error) => {
-      toast.error((error as Error).message || "Failed to extract job details");
+      toast.error((error as Error).message || "Failed to check companies");
     },
   });
 
@@ -1181,6 +1181,20 @@ export default function ResumeQueueStudio() {
     onSuccess: (result) => setDuplicateCheck(result),
     onError: (error) => {
       toast.error((error as Error).message || "Failed to check company");
+    },
+  });
+
+  const fetchFromUrl = useMutation({
+    mutationFn: () => api.fetchJobFromUrl(jobUrl),
+    onSuccess: (result) => {
+      if (result.jobTitle) setJobTitle(result.jobTitle);
+      if (result.company) setCompany(result.company);
+      if (result.jobDescription) setJobDescription(result.jobDescription);
+      setDuplicateCheck(null);
+      toast.success("Job details filled in from the URL");
+    },
+    onError: (error) => {
+      toast.error((error as Error).message || "Failed to fetch job details from that URL");
     },
   });
 
@@ -1225,7 +1239,6 @@ export default function ResumeQueueStudio() {
     setCompany("");
     setJobUrl("");
     setJobDescription("");
-    setJobPostingPaste("");
     setDuplicateCheck(null);
     return true;
   }
@@ -1949,28 +1962,65 @@ export default function ResumeQueueStudio() {
 
             <div className="mt-5 space-y-4">
               <div className="space-y-1.5 rounded-lg border border-dashed border-border bg-muted/20 p-3">
-                <Label htmlFor="jobPostingPaste">Paste the full job posting</Label>
+                <Label htmlFor="jobBoardPaste">Highlight &amp; paste job board listings</Label>
                 <Textarea
-                  id="jobPostingPaste"
+                  id="jobBoardPaste"
                   rows={5}
-                  value={jobPostingPaste}
-                  onChange={(event) => setJobPostingPaste(event.target.value)}
-                  placeholder="Highlight and paste the whole listing from the job board here..."
+                  value={jobBoardPaste}
+                  onChange={(event) => setJobBoardPaste(event.target.value)}
+                  placeholder="Highlight and paste a chunk of job board search results (one or many listings)..."
                 />
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">
-                    Auto-fills job title, company, and description below — and flags if you've already applied.
+                    Pulls out every company mentioned and shows only the ones you're clear to apply to.
                   </p>
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
-                    disabled={extractJobDetails.isPending || !jobPostingPaste.trim()}
-                    onClick={() => extractJobDetails.mutate()}
+                    disabled={filterCompanies.isPending || !jobBoardPaste.trim()}
+                    onClick={() => filterCompanies.mutate()}
                   >
-                    {extractJobDetails.isPending ? "Extracting..." : "Extract & fill"}
+                    {filterCompanies.isPending ? "Checking..." : "Check companies"}
                   </Button>
                 </div>
+
+                {clearCompanies && (
+                  <div className="rounded-md border border-border bg-background p-2.5">
+                    {clearCompanies.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {companyFilterStats?.totalExtracted
+                          ? "Every company found is already blocked — none are clear to apply to right now."
+                          : "No companies found in that text."}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                          Clear to apply to ({clearCompanies.length}
+                          {companyFilterStats?.blockedCount ? ` — ${companyFilterStats.blockedCount} filtered out` : ""}):
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {clearCompanies.map((name) => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => {
+                                setCompany(name);
+                                setDuplicateCheck(null);
+                              }}
+                              className="rounded-full border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5"
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="mt-1.5 text-[11px] text-muted-foreground">
+                          Click a name to drop it into the Company field below.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {duplicateCheck?.blocked && (
@@ -2017,12 +2067,27 @@ export default function ResumeQueueStudio() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="jobUrl">Job URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                <Input
-                  id="jobUrl"
-                  value={jobUrl}
-                  onChange={(event) => setJobUrl(event.target.value)}
-                  placeholder="https://..."
-                />
+                <div className="flex gap-1.5">
+                  <Input
+                    id="jobUrl"
+                    value={jobUrl}
+                    onChange={(event) => setJobUrl(event.target.value)}
+                    placeholder="https://..."
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={fetchFromUrl.isPending || !jobUrl.trim()}
+                    onClick={() => fetchFromUrl.mutate()}
+                  >
+                    {fetchFromUrl.isPending ? "Fetching..." : "Fetch details"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Tries to auto-fill job title, company, and description from the link. Some job boards block this — paste the text above if it fails.
+                </p>
               </div>
 
               <div className="space-y-1.5">

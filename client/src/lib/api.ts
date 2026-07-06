@@ -1243,20 +1243,38 @@ export const api = {
     return data.duplicate;
   },
 
-  async parseJobPosting(text: string): Promise<{
+  async filterCompaniesFromText(text: string): Promise<{
+    clearCompanies: string[];
+    totalExtracted: number;
+    blockedCount: number;
+  }> {
+    return request<{
+      clearCompanies: string[];
+      totalExtracted: number;
+      blockedCount: number;
+    }>(
+      "/api/ai/filter-companies",
+      {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      },
+    );
+  },
+
+  async fetchJobFromUrl(url: string): Promise<{
     company: string;
     jobTitle: string;
-    duplicate: DuplicateCompanyCheck | null;
+    jobDescription: string;
   }> {
     return request<{
       company: string;
       jobTitle: string;
-      duplicate: DuplicateCompanyCheck | null;
+      jobDescription: string;
     }>(
-      "/api/ai/parse-job-posting",
+      "/api/ai/fetch-job-from-url",
       {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ url }),
       },
     );
   },
