@@ -1191,7 +1191,18 @@ export default function ResumeQueueStudio() {
       if (result.company) setCompany(result.company);
       if (result.jobDescription) setJobDescription(result.jobDescription);
       setDuplicateCheck(null);
-      toast.success("Job details filled in from the URL");
+
+      if (!result.jobTitle && !result.company) {
+        toast.warning(
+          result.jobDescription
+            ? "Filled in the description, but couldn't confidently identify the job title or company — check and fill those in manually."
+            : "Couldn't read this page well enough to fill anything in. Paste the text above instead.",
+        );
+      } else if (!result.jobTitle || !result.company) {
+        toast.warning(`Filled in what we could find — double-check the ${result.jobTitle ? "company" : "job title"} field.`);
+      } else {
+        toast.success("Job details filled in from the URL");
+      }
     },
     onError: (error) => {
       toast.error((error as Error).message || "Failed to fetch job details from that URL");

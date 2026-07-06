@@ -31,7 +31,12 @@ function getClient() {
     return null;
   }
 
-  client ??= new OpenAI({ apiKey });
+  // Without an explicit timeout, a slow upstream call can outlast Railway's
+  // own proxy timeout, which then kills the connection and hands the client
+  // a raw non-JSON response ("Unexpected server response") instead of a
+  // clean error — failing fast here lets the catch block below produce a
+  // proper JSON error well within that window.
+  client ??= new OpenAI({ apiKey, timeout: 25_000 });
   return client;
 }
 

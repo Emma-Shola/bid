@@ -33,7 +33,12 @@ function getClient() {
     return null;
   }
 
-  client ??= new OpenAI({ apiKey });
+  // Without an explicit timeout, a slow upstream call can outlast Railway's
+  // own proxy timeout, which then kills the connection and hands the client
+  // a raw non-JSON response ("Unexpected server response") instead of a
+  // clean error — failing fast here lets the catch block below produce a
+  // proper JSON error well within that window.
+  client ??= new OpenAI({ apiKey, timeout: 25_000 });
   return client;
 }
 
@@ -143,7 +148,10 @@ async function fetchPageText(initialUrl: URL): Promise<string> {
     }
 
     const html = await response.text();
-    return extractVisibleText(html);
+    // Cap raw HTML before parsing — a handful of job boards ship megabytes of
+    // inline state/script data that cheerio would otherwise have to parse in
+    // full just to have it discarded a moment later.
+    return extractVisibleText(html.slice(0, 1_000_000));
   }
 
   throw new Error("Too many redirects while fetching that URL.");
