@@ -10,6 +10,11 @@ export interface ManagerGenerationRules {
   duplicateCompanyCooldownDays?: number;
 }
 
+export interface AppliedCompanyEntry {
+  company: string;
+  appliedAt: string;
+}
+
 export interface User {
   id: string;
   email: string;

@@ -12,13 +12,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { BidderClient, Role, User } from "@/lib/types";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { AppliedCompanyEntry, BidderClient, Role, User } from "@/lib/types";
 
 function ClientsDialog({
   bidder,
@@ -209,6 +211,13 @@ function ManagerRulesDialog({
           <DialogTitle>Generation rules — {manager?.name}</DialogTitle>
         </DialogHeader>
 
+        <Tabs defaultValue="rules">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="rules">Rules</TabsTrigger>
+            <TabsTrigger value="applied">Applied companies</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="rules">
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
             <Label htmlFor="minAtsScore">Minimum ATS score (%)</Label>
@@ -291,8 +300,125 @@ function ManagerRulesDialog({
             </Button>
           </div>
         </div>
+          </TabsContent>
+
+          <TabsContent value="applied">
+            <AppliedCompaniesTab manager={manager} />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AppliedCompaniesTab({ manager }: { manager: User | null }) {
+  const qc = useQueryClient();
+  const [bulkInput, setBulkInput] = useState("");
+
+  const { data: companies = [], isLoading } = useQuery({
+    queryKey: ["manager-applied-companies", manager?.id],
+    queryFn: () => api.getManagerAppliedCompanies(manager!.id),
+    enabled: !!manager,
+  });
+
+  const add = useMutation({
+    mutationFn: (names: string[]) => api.addManagerAppliedCompanies(manager!.id, names),
+    onSuccess: (updated) => {
+      qc.setQueryData(["manager-applied-companies", manager?.id], updated);
+      setBulkInput("");
+      toast.success("Companies added");
+    },
+    onError: (error) => {
+      toast.error((error as Error).message || "Failed to add companies");
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (company: string) => api.removeManagerAppliedCompany(manager!.id, company),
+    onSuccess: (updated) => {
+      qc.setQueryData(["manager-applied-companies", manager?.id], updated);
+    },
+    onError: (error) => {
+      toast.error((error as Error).message || "Failed to remove company");
+    },
+  });
+
+  function handleAdd() {
+    const names = Array.from(
+      new Set(
+        bulkInput
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    );
+    if (names.length === 0) {
+      toast.error("Paste at least one company name");
+      return;
+    }
+    add.mutate(names);
+  }
+
+  return (
+    <div className="space-y-4 pt-2">
+      {!manager?.generationRules?.duplicateCompanyCooldownDays && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Set "Block reapplying to the same company for (days)" on the Rules tab first — this list only takes
+          effect once that's set.
+        </p>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="bulkCompanies">Paste companies already applied to (one per line)</Label>
+        <Textarea
+          id="bulkCompanies"
+          rows={8}
+          placeholder={"Acme Corp\nGlobex Inc\n..."}
+          value={bulkInput}
+          onChange={(e) => setBulkInput(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          Each one gets today's date as its applied date and stays blocked for the cooldown window above.
+        </p>
+        <Button type="button" size="sm" disabled={add.isPending} onClick={handleAdd}>
+          {add.isPending ? "Adding..." : "Add companies"}
+        </Button>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Currently blocked ({companies.length})</Label>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : companies.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No companies added yet.</p>
+        ) : (
+          <div className="max-h-64 overflow-y-auto rounded-md border">
+            <ul className="divide-y">
+              {companies.map((entry: AppliedCompanyEntry) => (
+                <li key={entry.company} className="flex items-center justify-between px-3 py-1.5 text-sm">
+                  <div>
+                    <span className="font-medium">{entry.company}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      applied {format(new Date(entry.appliedAt), "MMM d, yyyy")}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate(entry.company)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

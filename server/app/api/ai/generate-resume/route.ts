@@ -11,20 +11,10 @@ import { createBackgroundJob, markBackgroundJobCompleted, markBackgroundJobQaReq
 import { enqueueResumeGenerationJob } from "@/lib/background-queue";
 import { toPrismaJson } from "@/lib/json";
 import { CandidateProfileSchema, type CandidateProfile } from "@/lib/resume/candidate-profile";
-import { parseManagerGenerationRules } from "@/lib/manager-rules";
+import { normalizeCompanyName, parseAppliedCompanies, parseManagerGenerationRules } from "@/lib/manager-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function normalizeCompanyName(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[.,]/g, "")
-    .replace(/\b(inc|llc|ltd|corp|corporation|co|company|limited|group|holdings)\b\.?/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 async function resolveTemplateResume(input: {
   managerId: string | null;
@@ -199,7 +189,10 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     if (managerRules.duplicateCompanyCooldownDays) {
-      const cutoff = new Date(Date.now() - managerRules.duplicateCompanyCooldownDays * 24 * 60 * 60 * 1000);
+      const cooldownDays = managerRules.duplicateCompanyCooldownDays;
+      const cutoff = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000);
+      const targetCompany = normalizeCompanyName(parsed.data.company);
+
       const recentJobs = await prisma.backgroundJob.findMany({
         where: {
           userId: auth.user.id,
@@ -209,17 +202,25 @@ export async function POST(req: NextRequest) {
         select: { payload: true, createdAt: true }
       });
 
-      const targetCompany = normalizeCompanyName(parsed.data.company);
-      const duplicate = recentJobs.find((job) => {
+      const jobDuplicate = recentJobs.find((job) => {
         const payload = job.payload as { company?: unknown } | null;
         const jobCompany = typeof payload?.company === "string" ? normalizeCompanyName(payload.company) : "";
         return Boolean(targetCompany) && jobCompany === targetCompany;
       });
 
-      if (duplicate) {
-        const appliedOn = duplicate.createdAt.toISOString().slice(0, 10);
+      // Also check the manager's manually-imported list of companies the
+      // client already applied to before this system was tracking anything.
+      const appliedCompanies = parseAppliedCompanies(bidder.manager?.managerProfile?.appliedCompanies);
+      const importedDuplicate = appliedCompanies.find(
+        (entry) => normalizeCompanyName(entry.company) === targetCompany && new Date(entry.appliedAt) >= cutoff
+      );
+
+      const blockingDate = jobDuplicate?.createdAt ?? (importedDuplicate ? new Date(importedDuplicate.appliedAt) : null);
+
+      if (blockingDate) {
+        const appliedOn = blockingDate.toISOString().slice(0, 10);
         return jsonError(
-          `You already generated a resume for ${parsed.data.company} on ${appliedOn}. Your manager blocks reapplying to the same company within ${managerRules.duplicateCompanyCooldownDays} days.`,
+          `You already applied to ${parsed.data.company} on ${appliedOn}. Your manager blocks reapplying to the same company within ${cooldownDays} days.`,
           409
         );
       }

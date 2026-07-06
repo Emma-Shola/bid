@@ -1,6 +1,7 @@
 import type {
   Application,
   ApplicationStatus,
+  AppliedCompanyEntry,
   AuditLog,
   BackgroundJob,
   ManagerGenerationRules,
@@ -892,6 +893,36 @@ export const api = {
       },
     );
     return data.generationRules ?? {};
+  },
+
+  async getManagerAppliedCompanies(managerId: string): Promise<AppliedCompanyEntry[]> {
+    const data = await request<{ companies: AppliedCompanyEntry[] }>(
+      `/api/admin/managers/${managerId}/applied-companies`,
+      { method: "GET" },
+    );
+    return data.companies ?? [];
+  },
+
+  async addManagerAppliedCompanies(managerId: string, companies: string[]): Promise<AppliedCompanyEntry[]> {
+    const data = await request<{ companies: AppliedCompanyEntry[] }>(
+      `/api/admin/managers/${managerId}/applied-companies`,
+      {
+        method: "POST",
+        body: JSON.stringify({ companies }),
+      },
+    );
+    return data.companies ?? [];
+  },
+
+  async removeManagerAppliedCompany(managerId: string, company: string): Promise<AppliedCompanyEntry[]> {
+    const data = await request<{ companies: AppliedCompanyEntry[] }>(
+      `/api/admin/managers/${managerId}/applied-companies`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ company }),
+      },
+    );
+    return data.companies ?? [];
   },
 
   async getResumeProfile(resumeId: string): Promise<{

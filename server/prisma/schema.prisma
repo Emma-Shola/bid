@@ -73,6 +73,7 @@ model ManagerProfile {
   templateResumeUrl String?  @map("template_resume_url")
   templateResumeText String? @map("template_resume_text")
   generationRules   Json?    @map("generation_rules")
+  appliedCompanies  Json?    @map("applied_companies")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
