@@ -42,6 +42,7 @@ import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Textarea } from "@/components/ui/textarea";
 import { downloadBlob } from "@/lib/download";
+import { downloadCsv } from "@/lib/csv";
 import { normalizeGeneratedResumePreview } from "@/lib/resume-source";
 import { useChannel, type RealtimeEvent } from "@/lib/realtime";
 import { ResumeDocumentPreview } from "@/components/resume/ResumeDocumentPreview";
@@ -132,6 +133,11 @@ function getJobTitle(job: BackgroundJob) {
 function getJobCompany(job: BackgroundJob) {
   const payload = asRecord(job.payload);
   return typeof payload.company === "string" && payload.company.trim() ? payload.company : "Unknown company";
+}
+
+function getJobUrl(job: BackgroundJob) {
+  const payload = asRecord(job.payload);
+  return typeof payload.jobUrl === "string" ? payload.jobUrl : "";
 }
 
 function getJobDescription(job: BackgroundJob) {
@@ -1160,6 +1166,21 @@ export default function ResumeQueueStudio() {
     }
   }
 
+  function handleExportApplications() {
+    if (jobs.length === 0) {
+      toast.error("No applications to export yet.");
+      return;
+    }
+
+    downloadCsv(
+      `applications-${format(new Date(), "yyyy-MM-dd")}.csv`,
+      [
+        ["Company", "Job title", "Link"],
+        ...jobs.map((job) => [getJobCompany(job), getJobTitle(job), getJobUrl(job)]),
+      ],
+    );
+  }
+
   const filterCompanies = useMutation({
     mutationFn: () => api.filterCompaniesFromText(jobBoardPaste),
     onSuccess: (result) => {
@@ -1763,6 +1784,10 @@ export default function ResumeQueueStudio() {
             <Button variant="outline" onClick={() => navigate("/bidder/workspaces")}>
               <FolderPlus className="mr-1.5 h-4 w-4" />
               Workspaces
+            </Button>
+            <Button variant="outline" onClick={handleExportApplications}>
+              <Download className="mr-1.5 h-4 w-4" />
+              Export to spreadsheet
             </Button>
             <Button onClick={() => setGeneratePanelOpen(true)}>
               <Sparkles className="mr-1.5 h-4 w-4" />

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
@@ -9,6 +10,7 @@ import { DataTable, type Column } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { downloadCsv } from "@/lib/csv";
 import { format } from "date-fns";
 import type { Application } from "@/lib/types";
 
@@ -24,6 +26,21 @@ export default function BidderApplications() {
     queryFn: () => api.listApplications({ bidderId: user!.id, status }),
     enabled: !!user,
   });
+
+  function handleExport() {
+    if (data.length === 0) {
+      toast.error("No applications to export yet.");
+      return;
+    }
+
+    downloadCsv(
+      `applications-${format(new Date(), "yyyy-MM-dd")}.csv`,
+      [
+        ["Company", "Job title", "Link"],
+        ...data.map((row) => [row.company, row.jobTitle, row.jobUrl ?? row.url ?? ""]),
+      ],
+    );
+  }
 
   const columns: Column<Application>[] = [
     {
@@ -83,10 +100,16 @@ export default function BidderApplications() {
         title="Applications"
         description="All jobs you've applied to."
         actions={
-          <Button onClick={() => navigate("/bidder/applications/new")}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            New application
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={handleExport}>
+              <Download className="mr-1.5 h-4 w-4" />
+              Export to spreadsheet
+            </Button>
+            <Button onClick={() => navigate("/bidder/applications/new")}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              New application
+            </Button>
+          </div>
         }
       />
       {isLoading ? (
