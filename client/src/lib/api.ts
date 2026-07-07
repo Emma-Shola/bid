@@ -1072,6 +1072,10 @@ export const api = {
     return jobs.find((job) => job.id === id);
   },
 
+  async deleteJob(id: string): Promise<void> {
+    await request(`/api/jobs/${id}`, { method: "DELETE" });
+  },
+
   async retryJob(id: string): Promise<BackgroundJob> {
     const data = await request<{ job: Parameters<typeof mapBackgroundJob>[0] }>(
       `/api/admin/jobs/${id}/retry`,

@@ -121,7 +121,13 @@ async function fetchPageText(initialUrl: URL): Promise<string> {
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml"
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Upgrade-Insecure-Requests": "1",
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "none",
+          "Sec-Fetch-User": "?1"
         }
       });
     } finally {
@@ -136,6 +142,12 @@ async function fetchPageText(initialUrl: URL): Promise<string> {
       const nextUrl = new URL(location, currentUrl);
       currentUrl = await assertUrlIsSafeToFetch(nextUrl.toString());
       continue;
+    }
+
+    if (response.status === 403 || response.status === 429) {
+      throw new Error(
+        "This site is blocking automated access (common on LinkedIn, Indeed, and other major job boards). Paste the job text instead."
+      );
     }
 
     if (!response.ok) {

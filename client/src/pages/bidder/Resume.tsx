@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Save,
   Sparkles,
+  Trash2,
   TriangleAlert,
   Wand2,
   WandSparkles,
@@ -1343,6 +1344,22 @@ export default function ResumeQueueStudio() {
     }
   }
 
+  async function deleteQueueJob(job: QueueViewJob) {
+    const confirmed = window.confirm(
+      `Delete the resume for ${getJobTitle(job)} at ${getJobCompany(job)}? This can't be undone, and it will also clear it from the 30-day duplicate-company check.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await api.deleteJob(job.id);
+      setPendingGenerationRows((current) => current.filter((row) => row.id !== job.id));
+      void qc.invalidateQueries({ queryKey: ["bidder-jobs", user?.id] });
+      toast.success("Resume deleted");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to delete resume");
+    }
+  }
+
   async function retryQueueJob(job: QueueViewJob) {
     const retryInput = getGenerationInputFromJob(job);
     if (!retryInput.jobTitle.trim() || !retryInput.company.trim() || !retryInput.jobDescription.trim()) {
@@ -1510,6 +1527,14 @@ export default function ResumeQueueStudio() {
                 }}
               >
                 <RefreshCw className="h-3 w-3 text-violet-500" />
+              </Button>
+              <Button
+                size="icon"
+                variant="outline"
+                className="h-8 w-8 rounded-md hover:border-destructive/50 hover:text-destructive"
+                onClick={() => void deleteQueueJob(job)}
+              >
+                <Trash2 className="h-3 w-3" />
               </Button>
               <Button size="icon" variant="outline" className="h-8 w-8 rounded-md" onClick={() => setExpandedJobId(expanded ? null : job.id)}>
                 {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}

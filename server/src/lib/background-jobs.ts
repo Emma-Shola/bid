@@ -73,6 +73,14 @@ export async function getBackgroundJobById(jobId: string) {
   });
 }
 
+export async function deleteBackgroundJob(jobId: string) {
+  return prisma.backgroundJob.delete({
+    where: {
+      id: jobId
+    }
+  });
+}
+
 export async function markBackgroundJobProcessing(jobId: string, attempts: number) {
   const job = await updateBackgroundJob(jobId, {
     status: "processing",
