@@ -125,6 +125,19 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+// Mirrors the server's normalizeCompanyName() closely enough to match
+// "Acme Corp" against "Acme Corp Inc." for the purpose of dropping a
+// just-applied-to company out of the clear-to-apply list client-side.
+function normalizeCompanyNameForComparison(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[.,]/g, "")
+    .replace(/\b(inc|llc|ltd|corp|corporation|co|company|limited|group|holdings)\b\.?/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getJobTitle(job: BackgroundJob) {
   const payload = asRecord(job.payload);
   return typeof payload.jobTitle === "string" && payload.jobTitle.trim() ? payload.jobTitle : "Untitled role";
@@ -1267,6 +1280,12 @@ export default function ResumeQueueStudio() {
       jobUrl,
       workspaceId: activeWorkspace?.id ?? null,
     });
+
+    const appliedCompanyKey = normalizeCompanyNameForComparison(company);
+    setClearCompanies((current) =>
+      current ? current.filter((name) => normalizeCompanyNameForComparison(name) !== appliedCompanyKey) : current,
+    );
+
     setJobTitle("");
     setCompany("");
     setJobUrl("");
@@ -1352,6 +1371,11 @@ export default function ResumeQueueStudio() {
       ...retryInput,
       workspaceId: activeWorkspace.id,
     });
+
+    const retriedCompanyKey = normalizeCompanyNameForComparison(retryInput.company);
+    setClearCompanies((current) =>
+      current ? current.filter((name) => normalizeCompanyNameForComparison(name) !== retriedCompanyKey) : current,
+    );
   }
 
   const renderQueueJob = (job: QueueViewJob, index: number) => {
