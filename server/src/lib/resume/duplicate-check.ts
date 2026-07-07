@@ -19,6 +19,13 @@ async function loadRecentGenerationJobs(userId: string, cutoff: Date): Promise<R
     where: {
       userId,
       type: "resume.generate",
+      // Only a genuinely completed generation counts as "already applied to
+      // this company." A job stuck in qa_required means it never cleared the
+      // manager's quality bar even after retries — that's an unresolved draft,
+      // not a submitted application, and shouldn't burn the company's 30-day
+      // slot when the bidder just wants another attempt at it. Same reasoning
+      // excludes failed/dead_letter/queued/processing jobs.
+      status: "completed",
       createdAt: { gte: cutoff }
     },
     select: { payload: true, createdAt: true }
