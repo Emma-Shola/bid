@@ -247,7 +247,7 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
     const candidateName = exportPayload.source.name?.trim();
     const fileBase =
       managerRules.filenameIncludesCandidateName && candidateName
-        ? sanitizeFileName(`${candidateName} - ${generated.company}`)
+        ? sanitizeFileName(candidateName)
         : sanitizeFileName(
             [generated.resume.title || generated.jobTitle, generated.company, format].filter(Boolean).join("-")
           );

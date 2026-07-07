@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { X, Plus, Users2 } from "lucide-react";
+import { Download, X, Plus, Users2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { downloadFromUrl } from "@/lib/download";
 import { useAuth } from "@/lib/auth";
 import { PageHeader } from "@/components/PageHeader";
 import { DataTable, type Column } from "@/components/DataTable";
@@ -756,6 +757,15 @@ export default function Users() {
                 onClick={() => setRulesDialogManager(row)}
               >
                 Rules
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => downloadFromUrl(api.getManagerResumeReportUrl(row.id))}
+              >
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Export resumes
               </Button>
             </>
           )}

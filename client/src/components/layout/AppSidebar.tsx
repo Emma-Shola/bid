@@ -53,6 +53,7 @@ const groups: Record<Role, { label: string; items: NavItem[] }[]> = {
         { to: "/manager/analytics", label: "Analytics", icon: BarChart3 },
         { to: "/manager/bidders", label: "Bidders", icon: Users },
         { to: "/manager/resumes", label: "Resumes", icon: FileText },
+        { to: "/manager/resume-activity", label: "Resume activity", icon: Sparkles },
         { to: "/manager/notifications", label: "Notifications", icon: Bell },
       ],
     },

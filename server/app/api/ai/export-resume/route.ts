@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     const candidateName = typeof source.name === "string" ? source.name.trim() : "";
     const fileBase =
       filenameIncludesCandidateName && candidateName
-        ? sanitizeFileName(`${candidateName} - ${company || jobTitle}`)
+        ? sanitizeFileName(candidateName)
         : sanitizeFileName(company || jobTitle);
     const contentType =
       format === "docx"

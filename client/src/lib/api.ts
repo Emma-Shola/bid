@@ -1134,6 +1134,40 @@ export const api = {
     return buildUrl(`/api/generated-resumes/${generatedResumeId}/export?format=${format}`);
   },
 
+  getManagerResumeReportUrl(managerId?: string): string {
+    const params = new URLSearchParams({ format: "xlsx" });
+    if (managerId) params.set("managerId", managerId);
+    return buildUrl(`/api/manager/resume-report?${params.toString()}`);
+  },
+
+  async listManagerResumeReportRows(managerId?: string): Promise<
+    Array<{
+      id: string;
+      createdAt: string;
+      jobTitle: string;
+      company: string;
+      jobUrl: string;
+      score: number | null;
+      bidderName: string;
+    }>
+  > {
+    const params = new URLSearchParams();
+    if (managerId) params.set("managerId", managerId);
+    const query = params.toString();
+    const data = await request<{
+      rows: Array<{
+        id: string;
+        createdAt: string;
+        jobTitle: string;
+        company: string;
+        jobUrl: string;
+        score: number | null;
+        bidderName: string;
+      }>;
+    }>(`/api/manager/resume-report${query ? `?${query}` : ""}`, { method: "GET" });
+    return data.rows;
+  },
+
   async generateResume(input: {
     resumeId?: string;
     jobTitle: string;

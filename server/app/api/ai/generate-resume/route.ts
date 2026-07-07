@@ -101,6 +101,8 @@ async function finalizeGeneratedResume(input: {
   });
 
   // Metadata only — resume content is returned to the client but never persisted server-side.
+  // The numeric ATS score is the one exception: it's a small metric (not resume
+  // content) needed for the manager-facing resume-activity report.
   const dbResult = {
     meta: {
       resumeId: input.templateResumeId,
@@ -109,6 +111,7 @@ async function finalizeGeneratedResume(input: {
       mode: input.mode,
       requiresQa,
       cacheHit: cache.hit,
+      score: input.result.score.overall,
     }
   };
 

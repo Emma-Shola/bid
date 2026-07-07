@@ -31,6 +31,7 @@ const Analytics = lazy(() => import("./pages/manager/Analytics"));
 const Bidders = lazy(() => import("./pages/manager/Bidders"));
 const BidderDetail = lazy(() => import("./pages/manager/BidderDetail"));
 const ManagerResumes = lazy(() => import("./pages/manager/Resumes"));
+const ManagerResumeActivity = lazy(() => import("./pages/manager/ResumeActivity"));
 
 const AdminOverview = lazy(() => import("./pages/admin/Overview"));
 const Approvals = lazy(() => import("./pages/admin/Approvals"));
@@ -100,6 +101,7 @@ const App = () => (
                   <Route path="/manager/bidders" element={<Bidders />} />
                   <Route path="/manager/bidders/:id" element={<BidderDetail />} />
                   <Route path="/manager/resumes" element={<ManagerResumes />} />
+                  <Route path="/manager/resume-activity" element={<ManagerResumeActivity />} />
                   <Route path="/manager/notifications" element={<Notifications />} />
                 </Route>
 

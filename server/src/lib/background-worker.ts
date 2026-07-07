@@ -112,6 +112,8 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
 
   // DB result stores only metadata — resume content is never persisted server-side.
   // The full content is pushed via WebSocket so the client can save it locally.
+  // The numeric ATS score is the one exception: it's a small metric (not resume
+  // content) needed for the manager-facing resume-activity report.
   const dbResult = {
     meta: {
       resumeId: data.payload.resumeId,
@@ -120,6 +122,7 @@ async function handleResumeGeneration(job: import("bullmq").Job) {
       mode: "queued",
       requiresQa,
       cacheHit: cache.hit,
+      score: result.score.overall,
     }
   };
 
