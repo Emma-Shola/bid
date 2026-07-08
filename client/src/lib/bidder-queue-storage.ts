@@ -170,6 +170,7 @@ export function loadBidderJobsCache(userId: string): BackgroundJob[] {
           updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
           startedAt: typeof item.startedAt === "string" ? item.startedAt : undefined,
           finishedAt: typeof item.finishedAt === "string" ? item.finishedAt : undefined,
+          appliedAt: typeof item.appliedAt === "string" ? item.appliedAt : undefined,
           error: typeof item.error === "string" ? item.error : undefined,
           payload: item.payload && typeof item.payload === "object" && !Array.isArray(item.payload) ? (item.payload as Record<string, unknown>) : undefined,
           result: result as Record<string, unknown> | undefined,

@@ -333,6 +333,7 @@ function mapBackgroundJob(job: {
   startedAt?: string | Date | null;
   completedAt?: string | Date | null;
   failedAt?: string | Date | null;
+  appliedAt?: string | Date | null;
   error?: string | null;
   payload?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
@@ -356,6 +357,7 @@ function mapBackgroundJob(job: {
     updatedAt: job.updatedAt ? new Date(job.updatedAt).toISOString() : undefined,
     startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : undefined,
     finishedAt: job.completedAt ? new Date(job.completedAt).toISOString() : job.failedAt ? new Date(job.failedAt).toISOString() : undefined,
+    appliedAt: job.appliedAt ? new Date(job.appliedAt).toISOString() : undefined,
     error: job.error ?? undefined,
     payload: job.payload ?? undefined,
     // This was previously dropped entirely, even though the input carries it.
@@ -1074,6 +1076,14 @@ export const api = {
 
   async deleteJob(id: string): Promise<void> {
     await request(`/api/jobs/${id}`, { method: "DELETE" });
+  },
+
+  async setJobApplied(id: string, applied: boolean): Promise<BackgroundJob> {
+    const data = await request<{ job: Parameters<typeof mapBackgroundJob>[0] }>(`/api/jobs/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ applied }),
+    });
+    return mapBackgroundJob(data.job);
   },
 
   async retryJob(id: string): Promise<BackgroundJob> {

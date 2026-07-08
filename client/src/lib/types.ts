@@ -100,6 +100,7 @@ export interface BackgroundJob {
   updatedAt?: string;
   startedAt?: string;
   finishedAt?: string;
+  appliedAt?: string;
   error?: string;
   payload?: Record<string, unknown>;
   result?: Record<string, unknown>;

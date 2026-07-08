@@ -104,7 +104,7 @@ export async function buildResumeReportWorkbook(rows: ResumeReportRow[]): Promis
       excelRow.getCell("H").value = spanish ? "Argentina" : "";
       excelRow.getCell("I").value = "";
       excelRow.getCell("J").value = row.score ?? "";
-      excelRow.getCell("K").value = formatSlashDate(row.createdAt);
+      excelRow.getCell("K").value = formatSlashDate(row.appliedAt);
       excelRow.getCell("L").value = "";
 
       const statusCell = excelRow.getCell(statusColumnLetter);

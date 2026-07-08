@@ -48,6 +48,7 @@ export async function updateBackgroundJob(
     failedAt?: Date | null;
     deadLetterAt?: Date | null;
     deadLetterReason?: string | null;
+    appliedAt?: Date | null;
   }
 ) {
   return prisma.backgroundJob.update({
@@ -60,9 +61,14 @@ export async function updateBackgroundJob(
       ...(data.completedAt === null ? { completedAt: null } : {}),
       ...(data.failedAt === null ? { failedAt: null } : {}),
       ...(data.deadLetterAt === null ? { deadLetterAt: null } : {}),
-      ...(data.deadLetterReason === null ? { deadLetterReason: null } : {})
+      ...(data.deadLetterReason === null ? { deadLetterReason: null } : {}),
+      ...(data.appliedAt === null ? { appliedAt: null } : {})
     }
   });
+}
+
+export async function setBackgroundJobApplied(jobId: string, applied: boolean) {
+  return updateBackgroundJob(jobId, { appliedAt: applied ? new Date() : null });
 }
 
 export async function getBackgroundJobById(jobId: string) {

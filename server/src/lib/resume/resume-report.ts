@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 export type ResumeReportRow = {
   id: string;
   createdAt: Date;
+  appliedAt: Date;
   jobTitle: string;
   company: string;
   jobUrl: string;
@@ -19,6 +20,10 @@ export async function getResumeReportRows(managerId: string): Promise<ResumeRepo
   const jobs = await prisma.backgroundJob.findMany({
     where: {
       type: "resume.generate",
+      // Only include generations the bidder has actually marked as applied —
+      // a resume can be generated and never submitted, and those drafts
+      // shouldn't pollute the manager's application-tracking export.
+      appliedAt: { not: null },
       user: { bidder: { managerId } }
     },
     include: {
@@ -40,6 +45,7 @@ export async function getResumeReportRows(managerId: string): Promise<ResumeRepo
     return {
       id: job.id,
       createdAt: job.createdAt,
+      appliedAt: job.appliedAt ?? job.createdAt,
       jobTitle: typeof payload.jobTitle === "string" ? payload.jobTitle : "",
       company: typeof payload.company === "string" ? payload.company : "",
       jobUrl: typeof payload.jobUrl === "string" ? payload.jobUrl : "",

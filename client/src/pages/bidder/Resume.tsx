@@ -26,6 +26,7 @@ import { useAuth } from "@/lib/auth";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -1354,6 +1355,24 @@ export default function ResumeQueueStudio() {
     }
   }
 
+  async function toggleJobApplied(job: QueueViewJob, applied: boolean) {
+    qc.setQueryData<BackgroundJob[]>(["bidder-jobs", user?.id], (current) =>
+      (current ?? []).map((item) =>
+        item.id === job.id ? { ...item, appliedAt: applied ? new Date().toISOString() : undefined } : item,
+      ),
+    );
+
+    try {
+      await api.setJobApplied(job.id, applied);
+    } catch (error) {
+      void qc.invalidateQueries({ queryKey: ["bidder-jobs", user?.id] });
+      toast.error((error as Error).message || "Failed to update applied status");
+      return;
+    }
+
+    toast.success(applied ? "Marked as applied" : "Marked as not applied");
+  }
+
   async function deleteQueueJob(job: QueueViewJob) {
     const confirmed = window.confirm(
       `Delete the resume for ${getJobTitle(job)} at ${getJobCompany(job)}? This can't be undone, and it will also clear it from the 30-day duplicate-company check.`,
@@ -1535,8 +1554,16 @@ export default function ResumeQueueStudio() {
               <div className="mt-0.5 text-[11px] text-slate-400">{format(new Date(job.createdAt), "h:mm a")}</div>
             </div>
 
-            <div className="flex items-center">
+            <div className="flex flex-col items-start gap-1">
               <StatusBadge value={displayStatus} />
+              <label className="flex items-center gap-1 text-[10px] text-slate-500">
+                <Checkbox
+                  className="h-3.5 w-3.5"
+                  checked={Boolean(job.appliedAt)}
+                  onCheckedChange={(checked) => void toggleJobApplied(job, checked === true)}
+                />
+                Applied
+              </label>
             </div>
 
             <div className="text-[11px] tabular-nums text-slate-600">{formatQueueDuration(job)}</div>

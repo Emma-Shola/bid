@@ -76,7 +76,7 @@ export default function ManagerResumeActivity() {
     <div className="space-y-6">
       <PageHeader
         title="Resume activity"
-        description="Every resume your bidders have generated, across all of them."
+        description="Resumes your bidders have marked as applied, across all of them."
         actions={
           <Button variant="outline" onClick={() => downloadFromUrl(api.getManagerResumeReportUrl())}>
             <Download className="mr-1.5 h-4 w-4" />
