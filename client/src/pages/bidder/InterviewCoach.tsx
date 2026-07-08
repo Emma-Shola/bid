@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Copy, ExternalLink, Sparkles, Wand2, WandSparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Copy, ExternalLink, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -25,6 +25,24 @@ const refinePrompts = [
   "Add more technical detail",
 ];
 
+const MAX_QUESTIONS_PER_BATCH = 10;
+
+type QaResult = {
+  id: string;
+  question: string;
+  answer: string;
+  keyPoints: string[];
+  followUps: string[];
+  loading: boolean;
+  refining: boolean;
+  refineDraft: string;
+  error?: string;
+};
+
+function makeResultId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export default function InterviewCoach() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -42,13 +60,10 @@ export default function InterviewCoach() {
   const [jobTitle, setJobTitle] = useState(initialJobTitle);
   const [company, setCompany] = useState(initialCompany);
   const [jobDescription, setJobDescription] = useState(initialJobDescription);
-  const [question, setQuestion] = useState("Why do you feel interested in this role?");
-  const [lastAskedQuestion, setLastAskedQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [keyPoints, setKeyPoints] = useState<string[]>([]);
-  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
-  const [isCopied, setIsCopied] = useState(false);
-  const [refineInstruction, setRefineInstruction] = useState("");
+  const [questionsDraft, setQuestionsDraft] = useState(quickPrompts[0]);
+  const [results, setResults] = useState<QaResult[]>([]);
+  const [isAsking, setIsAsking] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const hasContext = useMemo(
     () => Boolean(applicationId || jobTitle.trim() || company.trim() || jobDescription.trim()),
@@ -64,61 +79,43 @@ export default function InterviewCoach() {
 
   // Reset the whole session whenever the coach is opened for a different
   // resume/job (new URL params) — otherwise this route stays mounted and the
-  // previous resume's question/answer bleeds into the next one.
+  // previous resume's questions/answers bleed into the next one.
   useEffect(() => {
     setJobTitle(initialJobTitle);
     setCompany(initialCompany);
     setJobDescription(initialJobDescription);
-    setQuestion(quickPrompts[0]);
-    setLastAskedQuestion("");
-    setAnswer("");
-    setKeyPoints([]);
-    setFollowUpQuestions([]);
-    setRefineInstruction("");
+    setQuestionsDraft(quickPrompts[0]);
+    setResults([]);
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!isCopied) return;
-    const timer = window.setTimeout(() => setIsCopied(false), 1800);
+    if (!copiedId) return;
+    const timer = window.setTimeout(() => setCopiedId(null), 1800);
     return () => window.clearTimeout(timer);
-  }, [isCopied]);
+  }, [copiedId]);
 
-  const ask = useMutation({
-    mutationFn: (variables: { question: string; refineInstruction?: string; previousAnswer?: string }) =>
-      api.askInterviewQuestion({
-        question: variables.question,
-        applicationId: applicationId || undefined,
-        jobTitle: jobTitle.trim() || undefined,
-        company: company.trim() || undefined,
-        jobDescription: jobDescription.trim() || undefined,
-        refineInstruction: variables.refineInstruction,
-        previousAnswer: variables.previousAnswer,
-      }),
-    onSuccess: (result, variables) => {
-      setAnswer(result.answer);
-      setKeyPoints(result.keyPoints || []);
-      setFollowUpQuestions(result.followUpQuestions || []);
-      setLastAskedQuestion(variables.question);
-      toast.success(variables.refineInstruction ? "Answer refined" : "Answer ready");
-    },
-    onError: (error) => {
-      toast.error((error as Error).message || "Failed to generate answer");
-    },
-  });
-
-  const isRefining = ask.isPending && Boolean(ask.variables?.refineInstruction);
-  const isAsking = ask.isPending && !isRefining;
-
-  async function handleCopy() {
-    if (!answer.trim()) return;
-    await navigator.clipboard.writeText(answer);
-    setIsCopied(true);
+  async function handleCopy(entry: QaResult) {
+    if (!entry.answer.trim()) return;
+    await navigator.clipboard.writeText(entry.answer);
+    setCopiedId(entry.id);
     toast.success("Answer copied");
   }
 
-  function handleAsk() {
-    if (!question.trim()) {
-      toast.error("Ask a question first.");
+  function appendQuickPrompt(prompt: string) {
+    setQuestionsDraft((current) => {
+      const lines = current.split("\n").map((line) => line.trim()).filter(Boolean);
+      if (lines.includes(prompt)) return current;
+      return [...lines, prompt].join("\n");
+    });
+  }
+
+  function handleAskAll() {
+    const questions = Array.from(
+      new Set(questionsDraft.split("\n").map((line) => line.trim()).filter(Boolean)),
+    ).slice(0, MAX_QUESTIONS_PER_BATCH);
+
+    if (questions.length === 0) {
+      toast.error("Ask at least one question first.");
       return;
     }
 
@@ -127,24 +124,85 @@ export default function InterviewCoach() {
       return;
     }
 
-    ask.mutate({ question: question.trim() });
-    setQuestion("");
+    const pending: QaResult[] = questions.map((question) => ({
+      id: makeResultId(),
+      question,
+      answer: "",
+      keyPoints: [],
+      followUps: [],
+      loading: true,
+      refining: false,
+      refineDraft: "",
+    }));
+
+    setResults((current) => [...pending, ...current]);
+    setQuestionsDraft("");
+    setIsAsking(true);
+
+    Promise.allSettled(
+      pending.map((entry) =>
+        api
+          .askInterviewQuestion({
+            question: entry.question,
+            applicationId: applicationId || undefined,
+            jobTitle: jobTitle.trim() || undefined,
+            company: company.trim() || undefined,
+            jobDescription: jobDescription.trim() || undefined,
+          })
+          .then((result) => {
+            setResults((current) =>
+              current.map((item) =>
+                item.id === entry.id
+                  ? { ...item, answer: result.answer, keyPoints: result.keyPoints ?? [], followUps: result.followUpQuestions ?? [], loading: false }
+                  : item,
+              ),
+            );
+          })
+          .catch((error) => {
+            setResults((current) =>
+              current.map((item) =>
+                item.id === entry.id ? { ...item, loading: false, error: (error as Error).message || "Failed to generate answer" } : item,
+              ),
+            );
+          }),
+      ),
+    ).finally(() => setIsAsking(false));
   }
 
-  function handleRefine(instruction?: string) {
-    const text = (instruction ?? refineInstruction).trim();
+  function handleRefine(entry: QaResult, instruction?: string) {
+    const text = (instruction ?? entry.refineDraft).trim();
     if (!text) {
       toast.error("Tell the coach what to change first.");
       return;
     }
+    if (!entry.answer.trim()) return;
 
-    if (!answer.trim() || !lastAskedQuestion.trim()) {
-      toast.error("Ask a question first before refining the answer.");
-      return;
-    }
+    setResults((current) => current.map((item) => (item.id === entry.id ? { ...item, refining: true } : item)));
 
-    ask.mutate({ question: lastAskedQuestion, refineInstruction: text, previousAnswer: answer });
-    setRefineInstruction("");
+    api
+      .askInterviewQuestion({
+        question: entry.question,
+        applicationId: applicationId || undefined,
+        jobTitle: jobTitle.trim() || undefined,
+        company: company.trim() || undefined,
+        jobDescription: jobDescription.trim() || undefined,
+        refineInstruction: text,
+        previousAnswer: entry.answer,
+      })
+      .then((result) => {
+        setResults((current) =>
+          current.map((item) =>
+            item.id === entry.id
+              ? { ...item, answer: result.answer, keyPoints: result.keyPoints ?? [], followUps: result.followUpQuestions ?? [], refining: false, refineDraft: "" }
+              : item,
+          ),
+        );
+        toast.success("Answer refined");
+      })
+      .catch((error) => {
+        setResults((current) => current.map((item) => (item.id === entry.id ? { ...item, refining: false } : item)));
+        toast.error((error as Error).message || "Failed to refine the answer");
+      });
   }
 
   return (
@@ -247,25 +305,28 @@ export default function InterviewCoach() {
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ask AI about this job</p>
-                <h2 className="mt-1 text-base font-semibold">Interview question</h2>
+                <h2 className="mt-1 text-base font-semibold">Interview questions</h2>
               </div>
-              <WandSparkles className="h-5 w-5 text-primary" />
+              <Sparkles className="h-5 w-5 text-primary" />
             </div>
 
             <div className="space-y-3">
               <Textarea
-                rows={5}
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                placeholder="Why do you feel interested in this role?"
+                rows={6}
+                value={questionsDraft}
+                onChange={(event) => setQuestionsDraft(event.target.value)}
+                placeholder={"One question per line, e.g.:\nWhy do you feel interested in this role?\nTell me about a technical challenge you solved."}
               />
+              <p className="text-xs text-muted-foreground">
+                Add as many as you like, one per line — each gets its own answer (up to {MAX_QUESTIONS_PER_BATCH} at a time).
+              </p>
 
               <div className="flex flex-wrap gap-2">
                 {quickPrompts.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
-                    onClick={() => setQuestion(prompt)}
+                    onClick={() => appendQuickPrompt(prompt)}
                     className="rounded-full border border-border bg-muted/30 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
                   >
                     {prompt}
@@ -273,7 +334,7 @@ export default function InterviewCoach() {
                 ))}
               </div>
 
-              <Button className="w-full" onClick={handleAsk} disabled={ask.isPending}>
+              <Button className="w-full" onClick={handleAskAll} disabled={isAsking}>
                 <Sparkles className="mr-1.5 h-4 w-4" />
                 {isAsking ? "Thinking..." : "Ask AI"}
               </Button>
@@ -285,99 +346,127 @@ export default function InterviewCoach() {
           <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Answer</p>
-                <h2 className="mt-1 text-base font-semibold">Strong interview response</h2>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Answers</p>
+                <h2 className="mt-1 text-base font-semibold">Strong interview responses</h2>
               </div>
-              <Button variant="outline" size="sm" onClick={handleCopy} disabled={!answer.trim()}>
-                <Copy className="mr-1.5 h-4 w-4" />
-                {isCopied ? "Copied" : "Copy"}
-              </Button>
+              {results.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={() => setResults([])}>
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Clear all
+                </Button>
+              )}
             </div>
 
-            {answer ? (
+            {results.length > 0 ? (
               <div className="space-y-4">
-                <div className="rounded-lg border border-border/80 bg-muted/25 p-4">
-                  <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">{answer}</p>
-                </div>
-
-                <div className="rounded-lg border border-dashed border-border/70 bg-background p-3">
-                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    <Wand2 className="h-3.5 w-3.5" />
-                    Refine this answer
-                  </div>
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {refinePrompts.map((prompt) => (
-                      <button
-                        key={prompt}
-                        type="button"
-                        onClick={() => handleRefine(prompt)}
-                        disabled={ask.isPending}
-                        className="rounded-full border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground disabled:opacity-50"
+                {results.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-border/80 bg-muted/25 p-4">
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <p className="text-sm font-semibold text-foreground">{entry.question}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 shrink-0 text-xs"
+                        onClick={() => handleCopy(entry)}
+                        disabled={!entry.answer.trim()}
                       >
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      value={refineInstruction}
-                      onChange={(event) => setRefineInstruction(event.target.value)}
-                      placeholder="Or type your own tweak..."
-                      className="h-8 text-xs"
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          handleRefine();
-                        }
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 shrink-0"
-                      onClick={() => handleRefine()}
-                      disabled={ask.isPending || !refineInstruction.trim()}
-                    >
-                      {isRefining ? "Refining..." : "Refine"}
-                    </Button>
-                  </div>
-                </div>
-
-                {keyPoints.length > 0 && (
-                  <div className="rounded-lg border border-border/70 bg-background p-4">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key points</h3>
-                    <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-                      {keyPoints.map((point) => (
-                        <li key={point} className="flex gap-2">
-                          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                          <span>{point}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {followUpQuestions.length > 0 && (
-                  <div className="rounded-lg border border-border/70 bg-background p-4">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Likely follow-ups
-                    </h3>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {followUpQuestions.map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground"
-                        >
-                          {item}
-                        </span>
-                      ))}
+                        <Copy className="mr-1 h-3 w-3" />
+                        {copiedId === entry.id ? "Copied" : "Copy"}
+                      </Button>
                     </div>
+
+                    {entry.loading ? (
+                      <p className="text-sm text-muted-foreground">Thinking...</p>
+                    ) : entry.error ? (
+                      <p className="text-sm text-destructive">{entry.error}</p>
+                    ) : (
+                      <>
+                        <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">{entry.answer}</p>
+
+                        <div className="mt-3 rounded-lg border border-dashed border-border/70 bg-background p-3">
+                          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            <Wand2 className="h-3.5 w-3.5" />
+                            Refine this answer
+                          </div>
+                          <div className="mb-2 flex flex-wrap gap-1.5">
+                            {refinePrompts.map((prompt) => (
+                              <button
+                                key={prompt}
+                                type="button"
+                                onClick={() => handleRefine(entry, prompt)}
+                                disabled={entry.refining}
+                                className="rounded-full border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground disabled:opacity-50"
+                              >
+                                {prompt}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              value={entry.refineDraft}
+                              onChange={(event) =>
+                                setResults((current) =>
+                                  current.map((item) => (item.id === entry.id ? { ...item, refineDraft: event.target.value } : item)),
+                                )
+                              }
+                              placeholder="Or type your own tweak..."
+                              className="h-8 text-xs"
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  handleRefine(entry);
+                                }
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 shrink-0"
+                              onClick={() => handleRefine(entry)}
+                              disabled={entry.refining || !entry.refineDraft.trim()}
+                            >
+                              {entry.refining ? "Refining..." : "Refine"}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {entry.keyPoints.length > 0 && (
+                          <div className="mt-3 rounded-lg border border-border/70 bg-background p-3">
+                            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key points</h3>
+                            <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+                              {entry.keyPoints.map((point) => (
+                                <li key={point} className="flex gap-2">
+                                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                                  <span>{point}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {entry.followUps.length > 0 && (
+                          <div className="mt-3 rounded-lg border border-border/70 bg-background p-3">
+                            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Likely follow-ups</h3>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {entry.followUps.map((item) => (
+                                <span
+                                  key={item}
+                                  className="rounded-full border border-border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground"
+                                >
+                                  {item}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
-                )}
+                ))}
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-border bg-muted/20 p-8 text-sm text-muted-foreground">
-                Ask a question and we&apos;ll generate a polished answer grounded in your latest resume and the job context.
+                Ask one or more questions and we&apos;ll generate a polished answer for each, grounded in your latest resume and the job context.
               </div>
             )}
           </div>
@@ -387,6 +476,7 @@ export default function InterviewCoach() {
             <ul className="mt-3 space-y-2">
               <li>• Open this page from an application to preload the job context automatically.</li>
               <li>• Ask specific questions like “Why do you want this role?” or “Tell me about a technical challenge.”</li>
+              <li>• Paste a whole list of interview questions at once, one per line, to get answers for all of them together.</li>
               <li>• Keep the job description current so the answer stays relevant and ATS-aligned.</li>
             </ul>
           </div>

@@ -68,16 +68,26 @@ import {
 type QueueFilter = "all" | "queued" | "running" | "succeeded" | "qa_required" | "failed";
 type QueueSortMode = "newest" | "oldest" | "fastest" | "slowest";
 
-type QaState = {
+type QaResultEntry = {
+  id: string;
   question: string;
-  askedQuestion: string;
   answer: string;
   keyPoints: string[];
   followUps: string[];
   loading: boolean;
   refining: boolean;
   refineDraft: string;
+  error?: string;
 };
+
+type QaState = {
+  questionsDraft: string;
+  results: QaResultEntry[];
+};
+
+function makeQaResultId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 type QueueViewJob = BackgroundJob & {
   workspaceId: string | null;
@@ -1411,55 +1421,100 @@ export default function ResumeQueueStudio() {
       resumeTemplates.find((template) => template.id === templateId)?.title ??
       (templateId ? "Linked template" : "No template link");
     const qaState = qaByJobId[job.id] ?? {
-      question: getDefaultQuestionForJob(job),
-      askedQuestion: "",
-      answer: "",
-      keyPoints: [],
-      followUps: [],
-      loading: false,
-      refining: false,
-      refineDraft: "",
+      questionsDraft: getDefaultQuestionForJob(job),
+      results: [],
     };
 
-    async function refineAnswer(instruction: string) {
-      const askedQuestion = qaState.askedQuestion;
-      const previousAnswer = qaState.answer;
-      if (!instruction.trim() || !askedQuestion.trim()) return;
+    function updateJobResults(updater: (results: QaResultEntry[]) => QaResultEntry[]) {
+      setQaByJobId((current) => {
+        const state = current[job.id] ?? qaState;
+        return { ...current, [job.id]: { ...state, results: updater(state.results) } };
+      });
+    }
+
+    function handleAskAllForJob() {
+      const questions = Array.from(
+        new Set(qaState.questionsDraft.split("\n").map((line) => line.trim()).filter(Boolean)),
+      ).slice(0, 10);
+      if (questions.length === 0) return;
+
+      const pending: QaResultEntry[] = questions.map((question) => ({
+        id: makeQaResultId(),
+        question,
+        answer: "",
+        keyPoints: [],
+        followUps: [],
+        loading: true,
+        refining: false,
+        refineDraft: "",
+      }));
 
       setQaByJobId((current) => ({
         ...current,
-        [job.id]: { ...qaState, refining: true },
+        [job.id]: { questionsDraft: "", results: [...pending, ...qaState.results] },
       }));
-      try {
-        const result = await api.askInterviewQuestion({
-          question: askedQuestion,
+
+      pending.forEach((entry) => {
+        api
+          .askInterviewQuestion({
+            question: entry.question,
+            jobTitle: getJobTitle(job),
+            company: getJobCompany(job),
+            jobDescription: getJobDescription(job),
+            structured: structuredResult
+              ? (structuredResult as unknown as { source: Record<string, unknown>; tailored: Record<string, unknown> })
+              : undefined,
+          })
+          .then((result) => {
+            updateJobResults((results) =>
+              results.map((item) =>
+                item.id === entry.id
+                  ? { ...item, answer: result.answer, keyPoints: result.keyPoints ?? [], followUps: result.followUpQuestions ?? [], loading: false }
+                  : item,
+              ),
+            );
+          })
+          .catch((error) => {
+            updateJobResults((results) =>
+              results.map((item) =>
+                item.id === entry.id ? { ...item, loading: false, error: (error as Error).message || "Failed to generate an interview answer" } : item,
+              ),
+            );
+          });
+      });
+    }
+
+    function refineAnswer(entryId: string, instruction: string) {
+      const entry = qaState.results.find((item) => item.id === entryId);
+      if (!entry || !instruction.trim() || !entry.answer.trim()) return;
+
+      updateJobResults((results) => results.map((item) => (item.id === entryId ? { ...item, refining: true } : item)));
+
+      api
+        .askInterviewQuestion({
+          question: entry.question,
           refineInstruction: instruction.trim(),
-          previousAnswer,
+          previousAnswer: entry.answer,
           jobTitle: getJobTitle(job),
           company: getJobCompany(job),
           jobDescription: getJobDescription(job),
           structured: structuredResult
             ? (structuredResult as unknown as { source: Record<string, unknown>; tailored: Record<string, unknown> })
             : undefined,
+        })
+        .then((result) => {
+          updateJobResults((results) =>
+            results.map((item) =>
+              item.id === entryId
+                ? { ...item, answer: result.answer, keyPoints: result.keyPoints ?? [], followUps: result.followUpQuestions ?? [], refining: false, refineDraft: "" }
+                : item,
+            ),
+          );
+        })
+        .catch((error) => {
+          updateJobResults((results) => results.map((item) => (item.id === entryId ? { ...item, refining: false } : item)));
+          toast.error((error as Error).message || "Failed to refine the answer");
         });
-        setQaByJobId((current) => ({
-          ...current,
-          [job.id]: {
-            ...qaState,
-            answer: result.answer,
-            keyPoints: result.keyPoints ?? [],
-            followUps: result.followUpQuestions ?? [],
-            refining: false,
-            refineDraft: "",
-          },
-        }));
-      } catch (error) {
-        setQaByJobId((current) => ({
-          ...current,
-          [job.id]: { ...qaState, refining: false },
-        }));
-        toast.error((error as Error).message || "Failed to refine the answer");
-      }
     }
 
     return (
@@ -1621,17 +1676,14 @@ export default function ResumeQueueStudio() {
                 </div>
 
                 <Textarea
-                  value={qaState.question}
+                  value={qaState.questionsDraft}
                   onChange={(event) =>
                     setQaByJobId((current) => ({
                       ...current,
-                      [job.id]: {
-                        ...qaState,
-                        question: event.target.value,
-                      },
+                      [job.id]: { ...qaState, questionsDraft: event.target.value },
                     }))
                   }
-                  placeholder="Ask a tailored interview question..."
+                  placeholder={"One question per line for multiple, e.g.:\nWhy do you want this role?\nTell me about a major challenge you solved."}
                   className="min-h-[92px] resize-none rounded-xl bg-background"
                 />
 
@@ -1648,13 +1700,11 @@ export default function ResumeQueueStudio() {
                       variant="outline"
                       className="h-8 rounded-full text-xs"
                       onClick={() =>
-                        setQaByJobId((current) => ({
-                          ...current,
-                          [job.id]: {
-                            ...qaState,
-                            question: prompt,
-                          },
-                        }))
+                        setQaByJobId((current) => {
+                          const lines = qaState.questionsDraft.split("\n").map((line) => line.trim()).filter(Boolean);
+                          const nextDraft = lines.includes(prompt) ? qaState.questionsDraft : [...lines, prompt].join("\n");
+                          return { ...current, [job.id]: { ...qaState, questionsDraft: nextDraft } };
+                        })
                       }
                     >
                       {prompt}
@@ -1664,142 +1714,114 @@ export default function ResumeQueueStudio() {
 
                 <Button
                   className="h-9 w-full rounded-full"
-                  disabled={qaState.loading || !qaState.question.trim()}
-                  onClick={async () => {
-                    const question = qaState.question.trim();
-                    if (!question) return;
-                    setQaByJobId((current) => ({
-                      ...current,
-                      [job.id]: { ...qaState, question: "", loading: true },
-                    }));
-                    try {
-                      const result = await api.askInterviewQuestion({
-                        question,
-                        jobTitle: getJobTitle(job),
-                        company: getJobCompany(job),
-                        jobDescription: getJobDescription(job),
-                        structured: structuredResult
-                          ? (structuredResult as unknown as { source: Record<string, unknown>; tailored: Record<string, unknown> })
-                          : undefined,
-                      });
-                      setQaByJobId((current) => ({
-                        ...current,
-                        [job.id]: {
-                          question: "",
-                          askedQuestion: question,
-                          answer: result.answer,
-                          keyPoints: result.keyPoints ?? [],
-                          followUps: result.followUpQuestions ?? [],
-                          loading: false,
-                          refining: false,
-                          refineDraft: "",
-                        },
-                      }));
-                    } catch (error) {
-                      setQaByJobId((current) => ({
-                        ...current,
-                        [job.id]: {
-                          ...qaState,
-                          question: "",
-                          loading: false,
-                        },
-                      }));
-                      toast.error((error as Error).message || "Failed to generate an interview answer");
-                    }
-                  }}
+                  disabled={!qaState.questionsDraft.trim()}
+                  onClick={handleAskAllForJob}
                 >
                   <WandSparkles className="mr-1.5 h-4 w-4" />
-                  {qaState.loading ? "Generating answer..." : "Ask AI"}
+                  Ask AI
                 </Button>
 
-                {qaState.answer ? (
-                  <div className="rounded-xl border border-border/70 bg-background p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Answer</p>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          navigator.clipboard.writeText(qaState.answer).then(() => toast.success("Answer copied")).catch(() => toast.error("Could not copy"));
-                        }}
-                      >
-                        <Copy className="h-3 w-3" />
-                        Copy
-                      </Button>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{qaState.answer}</p>
-
-                    <div className="mt-3 rounded-lg border border-dashed border-border/70 bg-muted/15 p-2.5">
-                      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                        <Wand2 className="h-3 w-3" />
-                        Refine
-                      </div>
-                      <div className="mb-1.5 flex flex-wrap gap-1">
-                        {["Make it shorter", "More casual", "More confident", "Add more detail"].map((prompt) => (
-                          <button
-                            key={prompt}
-                            type="button"
-                            disabled={qaState.loading || qaState.refining}
-                            onClick={() => void refineAnswer(prompt)}
-                            className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground disabled:opacity-50"
+                {qaState.results.length > 0 && (
+                  <div className="space-y-3">
+                    {qaState.results.map((entry) => (
+                      <div key={entry.id} className="rounded-xl border border-border/70 bg-background p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-foreground">{entry.question}</p>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                            disabled={!entry.answer.trim()}
+                            onClick={() => {
+                              navigator.clipboard.writeText(entry.answer).then(() => toast.success("Answer copied")).catch(() => toast.error("Could not copy"));
+                            }}
                           >
-                            {prompt}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex gap-1.5">
-                        <input
-                          value={qaState.refineDraft}
-                          onChange={(event) =>
-                            setQaByJobId((current) => ({
-                              ...current,
-                              [job.id]: { ...qaState, refineDraft: event.target.value },
-                            }))
-                          }
-                          placeholder="Or type your own tweak..."
-                          className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              void refineAnswer(qaState.refineDraft);
-                            }
-                          }}
-                        />
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 shrink-0 rounded-md px-2 text-[11px]"
-                          disabled={qaState.loading || qaState.refining || !qaState.refineDraft.trim()}
-                          onClick={() => void refineAnswer(qaState.refineDraft)}
-                        >
-                          {qaState.refining ? "Refining..." : "Refine"}
-                        </Button>
-                      </div>
-                    </div>
+                            <Copy className="h-3 w-3" />
+                            Copy
+                          </Button>
+                        </div>
 
-                    {qaState.keyPoints.length > 0 ? (
-                      <div className="mt-3">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Key points</p>
-                        <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                          {qaState.keyPoints.map((point) => (
-                            <li key={point}>• {point}</li>
-                          ))}
-                        </ul>
+                        {entry.loading ? (
+                          <p className="mt-2 text-sm text-muted-foreground">Generating answer...</p>
+                        ) : entry.error ? (
+                          <p className="mt-2 text-sm text-destructive">{entry.error}</p>
+                        ) : (
+                          <>
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{entry.answer}</p>
+
+                            <div className="mt-3 rounded-lg border border-dashed border-border/70 bg-muted/15 p-2.5">
+                              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                <Wand2 className="h-3 w-3" />
+                                Refine
+                              </div>
+                              <div className="mb-1.5 flex flex-wrap gap-1">
+                                {["Make it shorter", "More casual", "More confident", "Add more detail"].map((prompt) => (
+                                  <button
+                                    key={prompt}
+                                    type="button"
+                                    disabled={entry.refining}
+                                    onClick={() => refineAnswer(entry.id, prompt)}
+                                    className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground disabled:opacity-50"
+                                  >
+                                    {prompt}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="flex gap-1.5">
+                                <input
+                                  value={entry.refineDraft}
+                                  onChange={(event) =>
+                                    updateJobResults((results) =>
+                                      results.map((item) => (item.id === entry.id ? { ...item, refineDraft: event.target.value } : item)),
+                                    )
+                                  }
+                                  placeholder="Or type your own tweak..."
+                                  className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      refineAnswer(entry.id, entry.refineDraft);
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 shrink-0 rounded-md px-2 text-[11px]"
+                                  disabled={entry.refining || !entry.refineDraft.trim()}
+                                  onClick={() => refineAnswer(entry.id, entry.refineDraft)}
+                                >
+                                  {entry.refining ? "Refining..." : "Refine"}
+                                </Button>
+                              </div>
+                            </div>
+
+                            {entry.keyPoints.length > 0 ? (
+                              <div className="mt-3">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Key points</p>
+                                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                                  {entry.keyPoints.map((point) => (
+                                    <li key={point}>• {point}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                            {entry.followUps.length > 0 ? (
+                              <div className="mt-3">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Follow-ups</p>
+                                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                                  {entry.followUps.map((point) => (
+                                    <li key={point}>• {point}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                          </>
+                        )}
                       </div>
-                    ) : null}
-                    {qaState.followUps.length > 0 ? (
-                      <div className="mt-3">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Follow-ups</p>
-                        <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                          {qaState.followUps.map((point) => (
-                            <li key={point}>• {point}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
+                    ))}
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
           </CollapsibleContent>
