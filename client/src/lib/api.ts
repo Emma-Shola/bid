@@ -1104,7 +1104,7 @@ export const api = {
     if (params.to) qs.set("to", params.to);
     const data = await request<{
       items: Array<{ id: string; userId: string; status: string; createdAt: string; payload?: Record<string, unknown> }>;
-    }>(buildUrl(`/api/admin/jobs?${qs.toString()}`), { method: "GET" });
+    }>(`/api/admin/jobs?${qs.toString()}`, { method: "GET" });
     return data.items.map((item) => ({
       id: item.id,
       userId: item.userId,

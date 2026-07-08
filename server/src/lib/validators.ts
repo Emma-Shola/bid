@@ -135,7 +135,7 @@ export const auditLogListQuerySchema = z.object({
 
 export const backgroundJobListQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(2000).default(20),
   userId: z.string().min(1).optional(),
   type: z.string().trim().max(100).optional(),
   status: z
