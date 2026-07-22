@@ -12,7 +12,6 @@ import { buildResumeDocxBuffer, buildResumePdfBuffer } from "@/lib/resume/export
 import { analyzeJobDescription } from "@/lib/resume/jd";
 import { buildProfileSkeleton } from "@/lib/resume/profile-skeleton";
 import { type ParsedResume, type TailoredResume } from "@/lib/resume/types";
-import { parseManagerGenerationRules } from "@/lib/manager-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -243,14 +242,8 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
           });
     log(`buffer built size=${buffer.length} bytes`);
 
-    const managerRules = parseManagerGenerationRules(generated.resume.manager?.managerProfile?.generationRules);
     const candidateName = exportPayload.source.name?.trim();
-    const fileBase =
-      managerRules.filenameIncludesCandidateName && candidateName
-        ? sanitizeFileName(candidateName)
-        : sanitizeFileName(
-            [generated.resume.title || generated.jobTitle, generated.company, format].filter(Boolean).join("-")
-          );
+    const fileBase = sanitizeFileName(candidateName || generated.resume.title || generated.jobTitle || "resume");
     const contentType =
       format === "docx"
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

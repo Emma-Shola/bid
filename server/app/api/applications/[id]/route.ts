@@ -11,6 +11,13 @@ import { rateLimit } from "@/lib/rate-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function managerCanAccessBidder(
+  bidder: { managerId: string | null; clientAssignments?: Array<{ managerId: string }> },
+  managerId: string
+) {
+  return bidder.managerId === managerId || Boolean(bidder.clientAssignments?.some((assignment) => assignment.managerId === managerId));
+}
+
 export async function GET(req: NextRequest, context: { params: { id: string } }) {
   try {
     const limited = await rateLimit(req, { key: "applications:get", limit: 120, windowMs: 60_000 });
@@ -22,7 +29,15 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
     const { id } = context.params;
     const application = await prisma.application.findUnique({
       where: { id },
-      include: { bidder: true }
+      include: {
+        bidder: {
+          include: {
+            clientAssignments: {
+              select: { managerId: true }
+            }
+          }
+        }
+      }
     });
 
     if (!application) return jsonError("Application not found", 404);
@@ -31,7 +46,7 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
       auth.user.role === UserRole.bidder
         ? application.bidderId === auth.user.id
         : auth.user.role === UserRole.manager
-          ? application.bidder.managerId === auth.user.id
+          ? managerCanAccessBidder(application.bidder, auth.user.id)
           : true;
 
     if (!canRead) return jsonError("Forbidden", 403);
@@ -61,7 +76,15 @@ export async function PUT(req: NextRequest, context: { params: { id: string } })
 
     const existing = await prisma.application.findUnique({
       where: { id },
-      include: { bidder: true }
+      include: {
+        bidder: {
+          include: {
+            clientAssignments: {
+              select: { managerId: true }
+            }
+          }
+        }
+      }
     });
 
     if (!existing) {
@@ -71,7 +94,7 @@ export async function PUT(req: NextRequest, context: { params: { id: string } })
     const canEditOwn = auth.user.role === UserRole.bidder && existing.bidderId === auth.user.id;
     const canEditAsManager =
       auth.user.role === UserRole.admin ||
-      (auth.user.role === UserRole.manager && existing.bidder.managerId === auth.user.id);
+      (auth.user.role === UserRole.manager && managerCanAccessBidder(existing.bidder, auth.user.id));
 
     if (!canEditOwn && !canEditAsManager) {
       return jsonError("Forbidden", 403);
@@ -145,7 +168,10 @@ export async function DELETE(req: NextRequest, context: { params: { id: string }
       include: {
         bidder: {
           select: {
-            managerId: true
+            managerId: true,
+            clientAssignments: {
+              select: { managerId: true }
+            }
           }
         }
       }
@@ -158,7 +184,7 @@ export async function DELETE(req: NextRequest, context: { params: { id: string }
     const canDeleteOwn = auth.user.role === UserRole.bidder && existing.bidderId === auth.user.id;
     const canDeleteAsManager =
       auth.user.role === UserRole.admin ||
-      (auth.user.role === UserRole.manager && existing.bidder.managerId === auth.user.id);
+      (auth.user.role === UserRole.manager && managerCanAccessBidder(existing.bidder, auth.user.id));
 
     if (!canDeleteOwn && !canDeleteAsManager) {
       return jsonError("Forbidden", 403);

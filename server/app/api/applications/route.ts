@@ -54,7 +54,18 @@ export async function GET(req: NextRequest) {
         : auth.user.role === UserRole.manager
           ? {
               bidder: {
-                managerId: auth.user.id
+                is: {
+                  OR: [
+                    { managerId: auth.user.id },
+                    {
+                      clientAssignments: {
+                        some: {
+                          managerId: auth.user.id
+                        }
+                      }
+                    }
+                  ]
+                }
               }
             }
           : {};
@@ -125,10 +136,21 @@ export async function POST(req: NextRequest) {
 
       const bidderProfile = await prisma.bidderProfile.findUnique({
         where: { id: body.bidderId },
-        select: { id: true, managerId: true, resumeUrl: true }
+        select: {
+          id: true,
+          managerId: true,
+          resumeUrl: true,
+          clientAssignments: {
+            where: { managerId: auth.user.id },
+            select: { managerId: true }
+          }
+        }
       });
 
-      if (!bidderProfile || bidderProfile.managerId !== auth.user.id) {
+      const isAssignedToManager =
+        bidderProfile?.managerId === auth.user.id || Boolean(bidderProfile?.clientAssignments.length);
+
+      if (!bidderProfile || !isAssignedToManager) {
         return jsonError("Bidder not found or not assigned to you", 403);
       }
 

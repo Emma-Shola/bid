@@ -1,14 +1,12 @@
 import { UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/rbac";
 import { jsonError } from "@/lib/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { applyCorsHeaders } from "@/lib/cors";
 import { buildResumeDocxBuffer, buildResumePdfBuffer } from "@/lib/resume/exporter";
 import { type ParsedResume, type TailoredResume } from "@/lib/resume/types";
-import { parseManagerGenerationRules } from "@/lib/manager-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,23 +55,8 @@ export async function POST(req: NextRequest) {
         ? await buildResumeDocxBuffer({ source, tailored })
         : await buildResumePdfBuffer({ source, tailored });
 
-    let filenameIncludesCandidateName = false;
-    if (resumeId) {
-      const resumeRecord = await prisma.resume
-        .findUnique({
-          where: { id: resumeId },
-          select: { manager: { select: { managerProfile: { select: { generationRules: true } } } } }
-        })
-        .catch(() => null);
-      const rules = parseManagerGenerationRules(resumeRecord?.manager?.managerProfile?.generationRules);
-      filenameIncludesCandidateName = Boolean(rules.filenameIncludesCandidateName);
-    }
-
     const candidateName = typeof source.name === "string" ? source.name.trim() : "";
-    const fileBase =
-      filenameIncludesCandidateName && candidateName
-        ? sanitizeFileName(candidateName)
-        : sanitizeFileName(company || jobTitle);
+    const fileBase = sanitizeFileName(candidateName || company || jobTitle);
     const contentType =
       format === "docx"
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

@@ -284,6 +284,32 @@ function getFileNameFromJob(job: QueueViewJob) {
   return `${company || "resume"}.pdf`;
 }
 
+function getClientNameFromStructured(structured?: unknown) {
+  if (!structured || typeof structured !== "object") return "";
+  const source = (structured as { source?: unknown }).source;
+  if (!source || typeof source !== "object") return "";
+  const name = (source as { name?: unknown }).name;
+  return typeof name === "string" ? name.trim() : "";
+}
+
+function buildClientResumeFileName(input: {
+  structured?: unknown;
+  fallbackFileName?: string;
+  fallbackJob?: QueueViewJob;
+  format?: "pdf" | "docx";
+}) {
+  const format = input.format ?? "pdf";
+  const clientName = getClientNameFromStructured(input.structured);
+  if (clientName) {
+    return sanitizeResumeFileName(`${clientName}.${format}`);
+  }
+
+  return sanitizeResumeFileName(
+    input.fallbackFileName ||
+      (input.fallbackJob ? getFileNameFromJob(input.fallbackJob).replace(/\.pdf$/i, `.${format}`) : `resume.${format}`),
+  );
+}
+
 function getDefaultQuestionForJob(job: QueueViewJob) {
   const title = getJobTitle(job);
   return title ? `Why do you feel interested in ${title}?` : DEFAULT_QUESTION;
@@ -905,9 +931,8 @@ export default function ResumeQueueStudio() {
     try {
       const fallbackJob = queueJobs.find((job) => job.id === targetJobId);
       const jobResumeId = fallbackJob ? getGenerationInputFromJob(fallbackJob).resumeId : selectedResumeId;
-      const managerRules = resumeTemplates.find((template) => template.id === jobResumeId)?.generationRules;
       const jobCompany = content.company ?? company;
-      const subfolderName = managerRules?.groupDownloadsByCompanyFolder && jobCompany ? jobCompany : undefined;
+      const subfolderName = jobCompany ? sanitizeResumeFileName(jobCompany) : undefined;
 
       const hasStructured =
         content.structured && typeof content.structured === "object" &&
@@ -941,9 +966,12 @@ export default function ResumeQueueStudio() {
       }
 
       log(`export fetched ok, size=${blob.size} bytes fileName="${fileName}"`);
-      const fallbackName = sanitizeResumeFileName(
-        fileName || (fallbackJob ? getFileNameFromJob(fallbackJob) : `resume_${targetJobId ?? "generated"}.pdf`),
-      );
+      const fallbackName = buildClientResumeFileName({
+        structured: hasStructured ? content.structured : fallbackJob ? getStructuredForJob(fallbackJob) : undefined,
+        fallbackFileName: fileName || undefined,
+        fallbackJob,
+        format: "pdf",
+      });
 
       const saveResult = await saveBlobToSelectedFolder(user.id, fallbackName, blob, subfolderName);
       if (saveResult.saved) {
@@ -1335,7 +1363,7 @@ export default function ResumeQueueStudio() {
           format,
           resumeId: getGenerationInputFromJob(job).resumeId,
         });
-        downloadBlob(blob, sanitizeResumeFileName(fileName));
+        downloadBlob(blob, buildClientResumeFileName({ structured, fallbackFileName: fileName, fallbackJob: job, format }));
         toast.success(`${format.toUpperCase()} download started`);
         return;
       }
@@ -1344,7 +1372,7 @@ export default function ResumeQueueStudio() {
         // Local cache missed the realtime-delivered content (refresh, missed
         // websocket event, etc). Fall back to the server-persisted copy.
         const { blob, fileName } = await api.fetchGeneratedResumeBlob(generatedResumeId, format);
-        downloadBlob(blob, sanitizeResumeFileName(fileName));
+        downloadBlob(blob, buildClientResumeFileName({ structured: getStructuredForJob(job), fallbackFileName: fileName, fallbackJob: job, format }));
         toast.success(`${format.toUpperCase()} download started`);
         return;
       }
